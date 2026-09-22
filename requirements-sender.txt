@@ -1,0 +1,3 @@
+# Install on 64-bit Raspberry Pi OS using the OS OpenCV/NumPy packages.
+# Wheel availability depends on Python and aarch64 support; see README.
+mediapipe>=0.10.14,<0.11
