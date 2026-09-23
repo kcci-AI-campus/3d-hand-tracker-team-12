@@ -1,8 +1,16 @@
 # 3D-Hand-Tracker
 
+## 두 손 3D Transformer
+
+GigaHands NPZ로 현재 시각의 두 손 XYZ를 예측하는 카메라·공간·시간 Transformer와 학습/검증/추론 코드를 제공합니다. 구조와 실행 방법은 [HAND_TRANSFORMER.md](HAND_TRANSFORMER.md)를 참고하세요. 본학습은 별도 실행하며 실시간 수신기와의 자동 연결은 아직 포함하지 않습니다.
+
+## GigaHands 학습 데이터 생성 GUI
+
+`python gigahands_sim.py`로 3대 카메라 투영, ray·타임스탬프 생성, 보정 오차·통신 지연 시뮬레이션, 3D 애니메이션 재생 및 Transformer용 NPZ 저장을 실행할 수 있습니다. 설치·입력 형식·설정·학습 데이터 계약은 [GIGAHANDS.md](GIGAHANDS.md)를 참고하세요.
+
 Raspberry Pi 3대와 MediaPipe Hand Landmarker를 이용한 다중 시점 손 랜드마크 추적 프로젝트입니다. 각 장치에서 카메라 영상을 추론하고, 마스터에서 세 카메라의 영상과 손 랜드마크를 함께 표시합니다.
 
-현재 구현은 **3개 시점의 손 추적 및 시각화**를 지원합니다. 카메라 보정, 촬영 동기화 및 삼각측량을 통한 통합 3D 좌표 복원은 구현되어 있지 않습니다.
+실시간 수신 화면은 **3개 시점의 손 추적 및 시각화**를 지원합니다. 카메라 보정, 촬영 동기화 및 삼각측량을 통한 통합 3D 좌표 복원은 아직 실시간 수신기에 연결되어 있지 않습니다. Transformer의 오프라인 학습·추론은 위 학습 코드로 실행합니다.
 
 ## 주요 기능
 

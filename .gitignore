@@ -1,4 +1,7 @@
 .venv/
+.venv-transformer/
+runs/
+.tools/
 __pycache__/
 models/*.task
 models/*.part
