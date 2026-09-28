@@ -1,0 +1,6 @@
+# Development-PC conversion/validation only; not Raspberry Pi runtime packages.
+torch==2.14.0
+tflite==2.18.0
+ai-edge-litert==2.2.0
+numpy==2.5.3
+opencv-python>=4.10,<6

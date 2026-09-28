@@ -1,16 +1,16 @@
 # 3D-Hand-Tracker
 
-## 두 손 3D Transformer
+## 두 손 3D 포즈 모델
 
-GigaHands NPZ로 현재 시각의 두 손 XYZ를 예측하는 카메라·공간·시간 Transformer와 학습/검증/추론 코드를 제공합니다. 구조와 실행 방법은 [HAND_TRANSFORMER.md](HAND_TRANSFORMER.md)를 참고하세요. 본학습은 별도 실행하며 실시간 수신기와의 자동 연결은 아직 포함하지 않습니다.
+비동기로 도착하는 카메라 3대의 2D 손 관절로 원하는 시각의 두 손 3D 관절을 예측하는 모델(기본 HandDirect: 신경망만으로 좌표 직접 출력, 비교용 HandLite: 삼각측량 + 신경망 보정)과 학습/검증/추론/배포 코드를 제공합니다. 구조와 실행 방법은 [docs/MODELS.md](docs/MODELS.md)를 참고하세요. 본학습은 별도 실행하며 실시간 수신기와의 자동 연결은 아직 포함하지 않습니다.
 
 ## GigaHands 학습 데이터 생성 GUI
 
-`python gigahands_sim.py`로 3대 카메라 투영, ray·타임스탬프 생성, 보정 오차·통신 지연 시뮬레이션, 3D 애니메이션 재생 및 Transformer용 NPZ 저장을 실행할 수 있습니다. 설치·입력 형식·설정·학습 데이터 계약은 [GIGAHANDS.md](GIGAHANDS.md)를 참고하세요.
+`python gigahands_sim.py`로 3대 카메라 투영, ray·타임스탬프 생성, 보정 오차·통신 지연 시뮬레이션, 3D 애니메이션 재생 및 모델 학습용 NPZ 저장을 실행할 수 있습니다. 설치·입력 형식·설정·학습 데이터 계약은 [GIGAHANDS.md](GIGAHANDS.md)를 참고하세요.
 
 Raspberry Pi 3대와 MediaPipe Hand Landmarker를 이용한 다중 시점 손 랜드마크 추적 프로젝트입니다. 각 장치에서 카메라 영상을 추론하고, 마스터에서 세 카메라의 영상과 손 랜드마크를 함께 표시합니다.
 
-실시간 수신 화면은 **3개 시점의 손 추적 및 시각화**를 지원합니다. 카메라 보정, 촬영 동기화 및 삼각측량을 통한 통합 3D 좌표 복원은 아직 실시간 수신기에 연결되어 있지 않습니다. Transformer의 오프라인 학습·추론은 위 학습 코드로 실행합니다.
+실시간 수신 화면은 **3개 시점의 손 추적 및 시각화**를 지원합니다. 카메라 보정, 촬영 동기화 및 삼각측량을 통한 통합 3D 좌표 복원은 아직 실시간 수신기에 연결되어 있지 않습니다. 모델의 오프라인 학습·추론은 위 학습 코드로 실행합니다.
 
 ## 주요 기능
 
@@ -20,17 +20,17 @@ Raspberry Pi 3대와 MediaPipe Hand Landmarker를 이용한 다중 시점 손 �
 - TCP를 통한 JPEG 영상 및 랜드마크 전송
 - 최신 프레임 우선 처리, 송신기 자동 재접속 및 오래된 영상의 `STALE` 표시
 - USB 카메라와 Picamera2 기반 CSI 카메라 지원
-- 카메라 1대만으로 실행하는 독립형 로컬 화면 지원 (`local_camera.py`)
+- 카메라 1대만으로 실행하는 독립형 로컬 화면 지원 (`camera/local_camera.py`)
 
 ## 시스템 구성
 
 | 장치 | 역할 | 실행 파일 |
 |---|---|---|
-| Pi 1 | 로컬 추론, 원격 영상 수신 및 화면 표시 | `master.py` |
-| Pi 2 | 카메라 추론 및 Pi 1로 전송 | `sender.py --id 2` |
-| Pi 3 | 카메라 추론 및 Pi 1로 전송 | `sender.py --id 3` |
+| Pi 1 | 로컬 추론, 원격 영상 수신 및 화면 표시 | `camera/master.py` |
+| Pi 2 | 카메라 추론 및 Pi 1로 전송 | `camera/sender.py --id 2` |
+| Pi 3 | 카메라 추론 및 Pi 1로 전송 | `camera/sender.py --id 3` |
 
-각 Pi에 카메라 1대를 연결합니다. Pi 2와 Pi 3은 각각 Pi 1의 TCP 포트 **5001**, **5002**에 접속합니다. Pi 1에서는 `sender.py`를 별도로 실행하지 않습니다.
+각 Pi에 카메라 1대를 연결합니다. Pi 2와 Pi 3은 각각 Pi 1의 TCP 포트 **5001**, **5002**에 접속합니다. Pi 1에서는 `camera/sender.py`를 별도로 실행하지 않습니다.
 
 ## 요구 환경
 
@@ -51,11 +51,11 @@ python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install --only-binary=:all: -r requirements-sender.txt
-python download_model.py
+python camera/download_model.py
 python -m pip check
 ```
 
-`requirements-sender.txt`는 마스터를 포함한 **3대 모두**에서 사용합니다. 모델은 `models/hand_landmarker.task`에 다운로드됩니다.
+`requirements-sender.txt`는 마스터를 포함한 **3대 모두**에서 사용합니다. 모델은 `camera/models/hand_landmarker.task`에 다운로드됩니다.
 
 CSI 카메라를 사용하는 Pi에는 Picamera2를 추가 설치합니다.
 
@@ -63,7 +63,7 @@ CSI 카메라를 사용하는 Pi에는 Picamera2를 추가 설치합니다.
 sudo apt install -y python3-picamera2
 ```
 
-MediaPipe 설치 가능 여부는 OS 아키텍처와 Python 버전에 따라 달라집니다. 설치 오류 및 NumPy/OpenCV 호환성에 관한 설명은 [상세 가이드](GUIDE.md#설치)를 참고하세요. 화면 표시에는 GUI를 지원하는 OpenCV가 필요합니다.
+MediaPipe 설치 가능 여부는 OS 아키텍처와 Python 버전에 따라 달라집니다. 설치 오류 및 NumPy/OpenCV 호환성에 관한 설명은 [상세 가이드](docs/GUIDE.md#설치)를 참고하세요. 화면 표시에는 GUI를 지원하는 OpenCV가 필요합니다.
 
 ## 실행
 
@@ -72,26 +72,26 @@ MediaPipe 설치 가능 여부는 OS 아키텍처와 Python 버전에 따라 달
 위 설치를 마친 장치 한 대에서 다음 명령을 실행하면, 해당 장치의 카메라에 Hand Landmarker를 실행하고 영상 위에 손 관절 21개와 연결선, 검출된 손 개수 및 추론 시간을 표시합니다. 다른 Pi나 네트워크 연결은 필요하지 않습니다. GUI를 지원하는 OpenCV와 데스크톱 또는 X11 전달 환경이 필요합니다.
 
 ```bash
-python local_camera.py
+python camera/local_camera.py
 ```
 
 기본값은 USB 카메라 `0`, 해상도 320×240, 최대 2개 손, 처리 상한 15 FPS입니다. 다른 USB 카메라 또는 CSI 카메라는 다음과 같이 선택합니다.
 
 ```bash
-python local_camera.py --camera 1
-python local_camera.py --backend picamera2
-python local_camera.py --hands 1 --fps 10
+python camera/local_camera.py --camera 1
+python camera/local_camera.py --backend picamera2
+python camera/local_camera.py --hands 1 --fps 10
 ```
 
-`Q`, `Esc`, 창 닫기 또는 `Ctrl+C`로 종료합니다. 모델 경로는 `--model`로 지정할 수 있으며, 전체 옵션은 `python local_camera.py --help`로 확인합니다.
+`Q`, `Esc`, 창 닫기 또는 `Ctrl+C`로 종료합니다. 모델 경로는 `--model`로 지정할 수 있으며, 전체 옵션은 `python camera/local_camera.py --help`로 확인합니다.
 
 ### World Landmarks 3D 와이어프레임 보기
 
 로컬 웹캠에서 추론한 `hand_world_landmarks`를 3D 와이어프레임으로 표시합니다. 기존 MediaPipe·NumPy·GUI 지원 OpenCV 환경을 사용하며 추가 렌더링 패키지는 필요하지 않습니다.
 
 ```bash
-python download_model.py
-python world_landmarks_viewer.py
+python camera/download_model.py
+python camera/world_landmarks_viewer.py
 ```
 
 Windows에서 패키지가 없다면 `python -m pip install -r requirements-sender.txt opencv-contrib-python numpy`로 설치합니다. `opencv-python-headless` 환경에서는 창을 표시할 수 없습니다.
@@ -116,21 +116,21 @@ GUI 데스크톱 터미널 또는 X11 전달이 설정된 터미널에서 실행
 
 ```bash
 source .venv/bin/activate
-python master.py
+python camera/master.py
 ```
 
 ### Pi 2 — 송신기
 
 ```bash
 source .venv/bin/activate
-python sender.py --master 192.168.1.100 --id 2
+python camera/sender.py --master 192.168.1.100 --id 2
 ```
 
 ### Pi 3 — 송신기
 
 ```bash
 source .venv/bin/activate
-python sender.py --master 192.168.1.100 --id 3
+python camera/sender.py --master 192.168.1.100 --id 3
 ```
 
 마스터는 `Q`, `Esc`, 창 닫기 또는 `Ctrl+C`로 종료합니다. 송신기는 `Ctrl+C`로 종료합니다.
@@ -147,24 +147,38 @@ python sender.py --master 192.168.1.100 --id 3
 | `--quality 60` | 송신기 | JPEG 품질 지정, 기본값 `75` |
 | `--base-port 7000` | 공통 | 기본 포트 변경. 송신 연결은 base+1, base+2 사용 |
 
-포트를 변경할 때는 마스터와 두 송신기에 같은 `--base-port` 값을 지정합니다. 전체 옵션은 `python master.py --help` 및 `python sender.py --help`로 확인할 수 있습니다.
+포트를 변경할 때는 마스터와 두 송신기에 같은 `--base-port` 값을 지정합니다. 전체 옵션은 `python camera/master.py --help` 및 `python camera/sender.py --help`로 확인할 수 있습니다.
 
-Windows에서 VS Code로 실행하고 VcXsrv로 화면을 표시하는 절차는 [VS Code·VcXsrv 가이드](GUIDE.md#vs-code에서-실행하고-vcxsrv로-화면-표시)를 참고하세요.
+Windows에서 VS Code로 실행하고 VcXsrv로 화면을 표시하는 절차는 [VS Code·VcXsrv 가이드](docs/GUIDE.md#vs-code에서-실행하고-vcxsrv로-화면-표시)를 참고하세요.
 
 ## 프로젝트 구조
 
 ```text
 3D-Hand-Tracker/
-├── master.py                # 로컬 추론, 원격 영상 수신 및 화면 표시
-├── local_camera.py          # 자신의 카메라만 추론하고 화면 표시 (네트워크 없음)
-├── dataset_viewer.py        # 재라벨링 데이터 ZIP/폴더 검수 서버
-├── viewer/index.html        # 이미지·관절 및 검수 기록 UI
-├── sender.py                # 카메라 추론 및 TCP 송신
-├── protocol.py              # 프레임 패킷 인코딩 및 수신
-├── download_model.py        # Hand Landmarker 모델 다운로드
-├── requirements-sender.txt  # 공통 Python 의존성
-├── tests/                   # 프로토콜 및 로컬 마스터 테스트
-├── GUIDE.md                 # 상세 설정, VcXsrv 및 구현 설명
+├── camera/                  # MediaPipe 카메라·네트워크 (루트에서 python camera/<파일>.py)
+│   ├── master.py            #   로컬 추론, 원격 영상 수신 및 화면 표시
+│   ├── sender.py            #   카메라 추론 및 TCP 송신
+│   ├── protocol.py          #   프레임 패킷 인코딩 및 수신
+│   ├── local_camera.py      #   자신의 카메라만 추론하고 화면 표시 (네트워크 없음)
+│   ├── world_landmarks_viewer.py
+│   ├── latency_recorder.py, run_latency.ps1   # 지연 측정 (docs/LATENCY.md)
+│   └── download_model.py    #   Hand Landmarker 모델 → camera/models/
+├── hand_tracking/           # 손 포즈 모델 라이브러리: HandDirect, HandLite (docs/MODELS.md)
+├── training/                # 학습·평가·추론·내보내기 (python -m training.<이름>)
+│   ├── train.py, evaluate.py, predict.py
+│   ├── export.py            #   ONNX·ncnn 내보내기 + 런타임 검증
+│   └── build_colab_notebook.py
+├── gigahands_*.py, motion_archive.py, npz_reader.py, start_gigahands.ps1
+│                            # GigaHands 시뮬레이터·데이터셋 생성 (GIGAHANDS.md)
+├── cpp/hand_lite/           # HandLite C++ 런타임
+├── local_camera_ncnn/       # Windows ncnn 카메라 앱 (실행 파일은 dist/)
+├── local_camera_ncnn_pi/    # 라즈베리 파이 ncnn 카메라 앱
+├── notebooks/               # Colab 노트북
+├── tests/                   # python -m unittest discover -s tests
+├── docs/                    # GUIDE, MODELS, HANDDIRECT·HANDLITE_ARCHITECTURE, LATENCY, reviews/
+├── requirements-*.txt
+├── exports/, samples/, profiles/, latency_logs/, runs/, dist/   # 데이터·결과 (대부분 git 제외)
+├── GIGAHANDS.md
 └── README.md
 ```
 
@@ -184,38 +198,15 @@ handedness는 자동 생성한 의사 라벨입니다. 기존 visibility의 0/1/
 - 좌우 반전 증강은 끄며, 선택적으로 Google Drive에 체크포인트를 저장합니다.
 - 관절 confidence는 실제 visibility 확률과 다릅니다. 현재 카메라 프로그램은 MediaPipe를 사용하며, 학습한 YOLO 가중치의 실시간 연결은 별도 구현이 필요합니다.
 
-## 재라벨링 데이터 검수 뷰어
+## 재라벨링 데이터 검수
 
 한 장씩 보면서 삭제하려면 Google Drive의 같은 폴더에 [이미지·라벨 삭제 노트북](notebooks/curate_hand_keypoints.ipynb)과 데이터 ZIP을 놓고 Colab에서 실행하세요. Drive를 마운트하고 `NOTEBOOK_DIR`에 그 폴더 경로를 지정합니다. ZIP 하나는 자동 선택하며, 여러 개면 `ZIP_NAME`에 파일명만 입력합니다. **현재 보는 이미지와 라벨 한 쌍만 Colab 임시 폴더에 압축 해제**하고, 다른 이미지로 이동하면 이전 캐시를 지웁니다. 삭제 버튼은 현재 캐시를 지우고 Drive의 `review_state/ZIP이름/review_state.json`에 삭제 목록을 저장해 즉시 목록에서 제외합니다. 마지막에 남은 파일을 원본 ZIP에서 하나씩 읽어 새 ZIP에 저장하므로 전체 압축 해제는 하지 않습니다. 원본 ZIP은 검수 중 수정하지 않습니다.
-
-Colab/Jupyter에서 한 번에 10장씩 보려면 [이미지·키포인트 10장 뷰어 노트북](notebooks/view_hand_keypoints_10.ipynb)을 사용합니다. 기존/재라벨링 데이터 ZIP 또는 폴더를 읽고, 2열×5행 또는 5열×2행으로 관절·번호·박스를 표시합니다. 이전/다음, 페이지 번호, 분할 필터, 파일명 검색을 지원하며, 클래스명은 데이터 YAML에서 읽습니다.
-
-Python 3.9 이상과 웹 브라우저로 실행하며 추가 패키지 설치는 필요하지 않습니다. 프로젝트 폴더에서 ZIP 또는 압축을 푼 데이터 폴더를 지정합니다.
-
-```bash
-python dataset_viewer.py "D:/datasets/hand_mediapipe_relabel.zip"
-# 폴더로 열기
-python dataset_viewer.py "D:/datasets/hand_mediapipe_relabel"
-```
-
-터미널에 표시되는 [로컬 뷰어](http://127.0.0.1:8765)를 브라우저에서 엽니다. 다른 프로그램이 포트를 사용 중이면 `--port 8766`을 붙입니다. 서버는 자신의 컴퓨터에서만 접속하며 `Ctrl+C`로 종료합니다.
-
-- ZIP을 풀지 않고 이미지 한 장씩 확인: 이전/다음 버튼, `←`/`→`, 번호 이동, 파일명·원본 경로 검색
-- train/val/test 및 검수 상태 필터, 화면 맞춤·확대, bbox·좌우·관절 번호·연결선 표시 전환
-- 관절 위에 마우스를 올려 좌표 확인, 손별 관절 좌표 표 및 원본 YOLO 라벨 확인
-- `A`: 정상, `R`: 재검토, `U`: 미검수. 메모와 검수 상태는 브라우저에 자동 저장하며, JSON으로 저장·불러오기 가능
-
-뷰어는 재라벨링 노트북의 `0=left_hand`, `1=right_hand`, 관절 21개 형식을 사용합니다. 좌우 score는 `manifest.jsonl`에 있을 때 표시합니다. 라벨이 없거나 잘못된 이미지도 목록에서 숨기지 않고 오류를 표시합니다.
-
-검수 기록은 원본 이미지나 라벨을 수정하거나 학습에서 자동 제외하지 않습니다. 브라우저 데이터 삭제·다른 브라우저 사용에 대비해 **검수 JSON 저장**으로 기록을 보관하세요. JSON은 동일 데이터 지문에만 불러올 수 있으며, ZIP과 압축을 푼 폴더는 서로 다른 데이터 지문을 사용합니다. 같은 포트와 동일 ZIP/폴더를 다시 열면 기존 브라우저 기록을 이어 볼 수 있습니다.
-
-재라벨링 과정에서 제외된 이미지는 결과 ZIP에 없으므로 화면에서 확인할 수 없습니다. 처리 기록에서는 제외 사유별 개수만 확인합니다.
 
 ## 테스트
 
 ```bash
 python -m unittest discover -s tests -v
-python -m compileall -q sender.py master.py local_camera.py dataset_viewer.py protocol.py download_model.py
+python -m compileall -q camera training hand_tracking
 ```
 
 단위 테스트와 별도로 실제 Pi, 카메라 및 GUI 환경에서 통합 동작을 확인해야 합니다. 실제 장치의 FPS와 지연은 측정되지 않았으며, `--fps` 값은 성능 보장이 아닌 처리 상한입니다.
@@ -226,4 +217,4 @@ python -m compileall -q sender.py master.py local_camera.py dataset_viewer.py pr
 - 인증과 암호화가 없는 TCP 통신을 사용하므로 신뢰하는 사설 LAN에서 실행합니다.
 - 마스터의 로컬 카메라 오류 이후에는 원인을 해결하고 마스터를 재시작해야 합니다.
 
-프로토콜, 장애 처리 및 3D 확장에 관한 설명은 [상세 가이드](GUIDE.md)를 참고하세요.
+프로토콜, 장애 처리 및 3D 확장에 관한 설명은 [상세 가이드](docs/GUIDE.md)를 참고하세요.

@@ -9,14 +9,13 @@ import tempfile
 import unittest
 import numpy as np
 from model_helpers import small  # noqa: F401  (skips the module without torch)
-import evaluate_hand_transformer
-import export_lite
-import predict_hand_transformer
-import train_hand_transformer
+from training import evaluate, export, predict, train
 from gigahands_sim import Config, demo_motion, simulate, save_dataset
 
-TINY_MODEL = ['--dim', '32', '--heads', '4', '--blocks', '1', '--dropout', '0']
+TINY_MODEL = ['--arch', 'lite', '--dim', '32', '--heads', '4', '--blocks', '1', '--dropout', '0']
 TINY_LITE = ['--arch', 'lite', '--dim', '32', '--heads', '4', '--blocks', '1', '--slots-per-camera', '4', '--dropout', '0']
+TINY_DIRECT = ['--arch', 'direct', '--dim', '32', '--heads', '4', '--blocks', '1', '--slots-per-camera', '4',
+               '--dropout', '0']
 
 
 def tiny_dataset(root):
@@ -50,7 +49,7 @@ class ScriptTests(unittest.TestCase):
         cls.folder.cleanup()
 
     def train(self, run, *extra, model=TINY_MODEL):
-        return quietly(train_hand_transformer.main, '--data', self.root/'data', '--output', run, '--epochs', 1,
+        return quietly(train.main, '--data', self.root/'data', '--output', run, '--epochs', 1,
                        '--batch-size', 2, '--windows-per-clip', 2, '--val-windows-per-clip', 2, '--threads', 2,
                        '--device', 'cpu', *model, *extra)
 
@@ -64,19 +63,19 @@ class ScriptTests(unittest.TestCase):
         del options['anchor_hold_s']
         (run/'run.json').write_text(json.dumps(options))
         self.train(run, '--resume')
+        self.train(run, '--resume', '--workers', 1, '--cache-dir', self.root/'cache')   # speed settings may change
         with self.assertRaisesRegex(ValueError, 'Resume settings'):
             self.train(run, '--resume', '--anchor-hold-s', '.25')
 
         common = ['--data', self.root/'data', '--windows-per-clip', 2, '--batch-size', 2]
-        quietly(evaluate_hand_transformer.main, '--checkpoint', run/'best.pt', '--output', run/'model.json', *common)
-        quietly(evaluate_hand_transformer.main, '--triangulation-only', '--calibration-steps', 1,
-                '--output', run/'anchor.json', *common)
+        quietly(evaluate.main, '--checkpoint', run/'best.pt', '--output', run/'model.json', *common)
+        quietly(evaluate.main, '--triangulation-only', '--output', run/'anchor.json', *common)
         model, anchor = (json.loads((run/f'{name}.json').read_text()) for name in ('model', 'anchor'))
-        self.assertEqual((model['method'], anchor['method']), ('transformer', 'triangulation_anchor'))
+        self.assertEqual((model['method'], anchor['method']), ('lite', 'triangulation_anchor'))
         self.assertEqual(model['samples'], anchor['samples'])
         self.assertTrue(np.isfinite([model['mpjpe_mm'], anchor['mpjpe_mm']]).all())
 
-        quietly(predict_hand_transformer.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
+        quietly(predict.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
                 '--output', run/'prediction.npz')
         with np.load(run/'prediction.npz') as prediction:
             self.assertEqual(prediction['predicted_xyz'].shape, (2,21,3))
@@ -86,19 +85,46 @@ class ScriptTests(unittest.TestCase):
         run = self.root/'lite'
         self.assertIn('parameters=', self.train(run, model=TINY_LITE))
         self.train(run, '--resume', model=TINY_LITE)
-        quietly(evaluate_hand_transformer.main, '--checkpoint', run/'best.pt', '--output', run/'model.json',
+        quietly(evaluate.main, '--checkpoint', run/'best.pt', '--output', run/'model.json',
                 '--data', self.root/'data', '--windows-per-clip', 2, '--batch-size', 2)
-        self.assertTrue(np.isfinite(json.loads((run/'model.json').read_text())['mpjpe_mm']))
-        quietly(predict_hand_transformer.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
+        evaluation = json.loads((run/'model.json').read_text())
+        self.assertEqual(evaluation['method'], 'lite')
+        self.assertTrue(np.isfinite(evaluation['mpjpe_mm']))
+        quietly(predict.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
                 '--output', run/'prediction.npz')
         with np.load(run/'prediction.npz') as prediction:
             self.assertEqual(prediction['calibration'].shape, (3,6))            # the final query's correction
         formats = [name for name, modules in (('onnx', ('onnx', 'onnxscript', 'onnxruntime')), ('ncnn', ('ncnn', 'pnnx')))
                    if all(importlib.util.find_spec(module) for module in modules)]
         if not formats:
-            self.skipTest('Install requirements-export.txt to test export_lite.py')
+            self.skipTest('Install requirements-export.txt to test training.export')
         # pnnx logs from native code; only the report goes through Python's stdout.
-        report = json.loads(quietly(export_lite.main, '--checkpoint', run/'best.pt', '--output', run/'deploy',
+        report = json.loads(quietly(export.main, '--checkpoint', run/'best.pt', '--output', run/'deploy',
+                                    '--formats', *formats, '--check-input', self.root/'data'/'val.npz',
+                                    '--queries', 8))
+        self.assertEqual(set(report['max_abs_difference']), set(formats))
+        self.assertLess(max(report['max_abs_difference'].values()), 2e-3)
+
+    def test_direct_train_evaluate_predict_export(self):
+        run = self.root/'direct'
+        self.assertIn('parameters=', self.train(run, '--train-queries', 4, model=TINY_DIRECT))
+        self.train(run, '--resume', '--train-queries', 4, model=TINY_DIRECT)
+        quietly(evaluate.main, '--checkpoint', run/'best.pt', '--output', run/'model.json',
+                '--data', self.root/'data', '--windows-per-clip', 2, '--batch-size', 2)
+        evaluation = json.loads((run/'model.json').read_text())
+        self.assertEqual(evaluation['method'], 'direct')
+        self.assertTrue(np.isfinite([evaluation['mpjpe_mm'], evaluation['mpjpe_world_mm']]).all())
+        self.assertIsNone(evaluation['calibration_mse'])                       # no camera correction
+        quietly(predict.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
+                '--output', run/'prediction.npz')
+        with np.load(run/'prediction.npz') as prediction:
+            self.assertEqual(prediction['predicted_xyz'].shape, (2,21,3))
+            self.assertNotIn('calibration', prediction.files)
+        formats = [name for name, modules in (('onnx', ('onnx', 'onnxscript', 'onnxruntime')), ('ncnn', ('ncnn', 'pnnx')))
+                   if all(importlib.util.find_spec(module) for module in modules)]
+        if not formats:
+            self.skipTest('Install requirements-export.txt to test training.export')
+        report = json.loads(quietly(export.main, '--checkpoint', run/'best.pt', '--output', run/'deploy',
                                     '--formats', *formats, '--check-input', self.root/'data'/'val.npz',
                                     '--queries', 8))
         self.assertEqual(set(report['max_abs_difference']), set(formats))

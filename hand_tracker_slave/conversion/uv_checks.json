@@ -1,0 +1,18 @@
+{
+  "normal_mirrored_False": {
+    "bytes": 336,
+    "valid_joints": 21
+  },
+  "normal_mirrored_True": {
+    "bytes": 336,
+    "valid_joints": 21
+  },
+  "two_hands_mirrored_False": {
+    "bytes": 336,
+    "valid_joints": 42
+  },
+  "black_mirrored_False": {
+    "bytes": 336,
+    "valid_joints": 0
+  }
+}

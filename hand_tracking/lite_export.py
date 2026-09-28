@@ -1,9 +1,10 @@
 """Export HandLite's three fixed-shape networks for lite_runtime: ONNX (onnxruntime) and
 ncnn (converted by pnnx). Shapes have no batch axis in ncnn; ONNX graphs take a batch of one.
 
-    encoder     features [2, 21*14], camera one-hot [3]                  -> tokens [2, dim]
-    calibrator  tokens [2*3K, dim], pool bias [3, 2*3K]                  -> correction [3, 6]
-    decoder     tokens [2*3K, dim], token bias [2*3K], gaps [2*3K], anchor features [42, 8] -> offset [42, 3]
+    encoder     features [2, 21*14], camera one-hot [3]                  -> tokens [P, dim]
+    calibrator  tokens [P*3K, dim], pool bias [3, P*3K]                  -> correction [3, 6]
+    decoder     tokens [P*3K, dim], token validity 0/1 [P*3K], gaps [P*3K], anchor features [42, A] -> offset [42, 3]
+P = config.event_tokens: 10 (one per finger and hand) or 2 (one per hand); A = config.anchor_features.
 """
 from dataclasses import asdict
 import contextlib
@@ -13,8 +14,8 @@ from pathlib import Path
 import torch
 from torch import nn
 from .constants import NUM_CAMERAS, NUM_HANDS, HAND_JOINTS
-from .lite import ANCHOR_FEATURES, HAND_FEATURES
-from .lite_runtime import GRAPHS, META_FILE
+from .lite import HAND_FEATURES
+from .lite_runtime import EXPORT_FORMAT, GRAPHS, META_FILE
 
 FORMATS = ('onnx', 'ncnn')
 
@@ -36,20 +37,20 @@ class CalibratorGraph(_Graph):
 
 
 class DecoderGraph(_Graph):
-    def forward(self, tokens, token_bias, gaps, anchor_features):
-        return self.module(tokens, token_bias, gaps, anchor_features)
+    def forward(self, tokens, token_valid, gaps, anchor_features):
+        return self.module(tokens, token_valid, gaps, anchor_features)
 
 
 def graphs(model):
     """name -> (module, example inputs with a batch of one)."""
     model = model.eval()
-    dim, tokens = model.config.dim, NUM_HANDS*model.slots
+    dim, tokens = model.config.dim, model.config.event_tokens*model.slots
     torch.manual_seed(0)
     token_example = torch.randn(1, tokens, dim)
     result = dict(encoder=(EncoderGraph(model.encoder), (torch.randn(1, NUM_HANDS, HAND_FEATURES),
                                                          torch.eye(NUM_CAMERAS)[:1])),
-                  decoder=(DecoderGraph(model.decoder), (token_example, torch.zeros(1, tokens), torch.rand(1, tokens),
-                                                         torch.randn(1, HAND_JOINTS, ANCHOR_FEATURES))))
+                  decoder=(DecoderGraph(model.decoder), (token_example, torch.ones(1, tokens), torch.rand(1, tokens),
+                                                         torch.randn(1, HAND_JOINTS, model.config.anchor_features))))
     if model.calibrator is not None:
         result['calibrator'] = (CalibratorGraph(model.calibrator), (token_example, torch.zeros(1, NUM_CAMERAS, tokens)))
     return result
@@ -77,17 +78,24 @@ def export_lite(model, directory, formats=FORMATS):
         # The runtime always loads three graphs; without a head it never calls this one.
         exported['calibrator'] = (CalibratorGraph(_ZeroCalibration()), (torch.zeros(1, 1, model.config.dim),
                                                                           torch.zeros(1, NUM_CAMERAS, 1)))
+    return write_graphs(exported, directory, formats, GRAPHS, META_FILE,
+                        dict(architecture='lite', export_format=EXPORT_FORMAT, config=asdict(model.config)))
+
+
+def write_graphs(exported, directory, formats, names, meta_file, meta):
+    """Export exported[name] = (module, example inputs) for names to ONNX and/or ncnn in the
+    (new) directory, and write meta plus the formats and graph input shapes to meta_file."""
     with torch.no_grad():
-        for name in GRAPHS:
+        for name in names:
             module, example = exported[name]
             if 'onnx' in formats:
                 program = torch.onnx.export(module, example, dynamo=True, verbose=False)
                 program.save(str(directory/f'{name}.onnx'))
             if 'ncnn' in formats:
                 _pnnx(module, example, directory, name)
-    meta = dict(architecture='lite', config=asdict(model.config), formats=list(formats), graphs={
-        name: dict(inputs=[list(value.shape[1:]) for value in exported[name][1]]) for name in GRAPHS})
-    (directory/META_FILE).write_text(json.dumps(meta, indent=2), encoding='utf-8')
+    meta = dict(meta, formats=list(formats), graphs={
+        name: dict(inputs=[list(value.shape[1:]) for value in exported[name][1]]) for name in names})
+    (directory/meta_file).write_text(json.dumps(meta, indent=2), encoding='utf-8')
     return meta
 
 

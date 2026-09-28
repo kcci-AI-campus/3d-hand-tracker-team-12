@@ -1,0 +1,535 @@
+{
+  "objects": [
+    {
+      "name": "Hand",
+      "type": "MESH",
+      "location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dimensions": [
+        16.772397994995117,
+        5.400660514831543,
+        22.95247459411621
+      ]
+    },
+    {
+      "name": "Nails",
+      "type": "MESH",
+      "location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dimensions": [
+        16.769765853881836,
+        1.169991135597229,
+        12.434588432312012
+      ]
+    },
+    {
+      "name": "Rig",
+      "type": "ARMATURE",
+      "location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dimensions": [
+        15.836487770080566,
+        1.2284408807754517,
+        22.059406280517578
+      ],
+      "bones": [
+        {
+          "name": "radius_ulna",
+          "parent": null,
+          "head": [
+            0.6640555262565613,
+            2.9026789860608915e-08,
+            0.30166447162628174
+          ],
+          "tail": [
+            -1.0785419940948486,
+            0.18815560638904572,
+            3.404228687286377
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "pinky_meta",
+          "parent": "radius_ulna",
+          "head": [
+            -1.0785419940948486,
+            0.18815560638904572,
+            3.404228687286377
+          ],
+          "tail": [
+            1.6321580410003662,
+            -0.8438282012939453,
+            10.758535385131836
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            },
+            {
+              "type": "COPY_ROTATION",
+              "name": "Copy Rotation"
+            }
+          ]
+        },
+        {
+          "name": "pinky_prox",
+          "parent": "pinky_meta",
+          "head": [
+            1.6321580410003662,
+            -0.8438282012939453,
+            10.758535385131836
+          ],
+          "tail": [
+            2.6602988243103027,
+            -0.6261053681373596,
+            14.031439781188965
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "pinky_midd",
+          "parent": "pinky_prox",
+          "head": [
+            2.6602988243103027,
+            -0.6261053681373596,
+            14.031439781188965
+          ],
+          "tail": [
+            3.2677597999572754,
+            -0.5806275010108948,
+            15.756645202636719
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "pinky_dist",
+          "parent": "pinky_midd",
+          "head": [
+            3.2677597999572754,
+            -0.5806275010108948,
+            15.756645202636719
+          ],
+          "tail": [
+            3.843529224395752,
+            -0.5669143795967102,
+            17.356351852416992
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "ring_meta",
+          "parent": "radius_ulna",
+          "head": [
+            -1.0785419940948486,
+            0.18815560638904572,
+            3.404228687286377
+          ],
+          "tail": [
+            -0.43452954292297363,
+            -0.7029299736022949,
+            11.147782325744629
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            },
+            {
+              "type": "COPY_ROTATION",
+              "name": "Copy Rotation"
+            }
+          ]
+        },
+        {
+          "name": "ring_prox",
+          "parent": "ring_meta",
+          "head": [
+            -0.43452954292297363,
+            -0.7029299736022949,
+            11.147782325744629
+          ],
+          "tail": [
+            0.10274171829223633,
+            -0.5215399265289307,
+            16.027503967285156
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "ring_midd",
+          "parent": "ring_prox",
+          "head": [
+            0.10274171829223633,
+            -0.5215399265289307,
+            16.027503967285156
+          ],
+          "tail": [
+            0.44043588638305664,
+            -0.4673037827014923,
+            18.79793930053711
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "ring_dist",
+          "parent": "ring_midd",
+          "head": [
+            0.44043588638305664,
+            -0.4673037827014923,
+            18.79793930053711
+          ],
+          "tail": [
+            0.7802194356918335,
+            -0.5162274837493896,
+            21.10797119140625
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "midd_meta",
+          "parent": "radius_ulna",
+          "head": [
+            -1.0785419940948486,
+            0.18815560638904572,
+            3.404228687286377
+          ],
+          "tail": [
+            -2.7783010005950928,
+            -0.9991902112960815,
+            11.412263870239258
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "midd_prox",
+          "parent": "midd_meta",
+          "head": [
+            -2.7783010005950928,
+            -0.9991902112960815,
+            11.412263870239258
+          ],
+          "tail": [
+            -2.8080830574035645,
+            -0.6384530663490295,
+            16.796669006347656
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "midd_midd",
+          "parent": "midd_prox",
+          "head": [
+            -2.8080830574035645,
+            -0.6384530663490295,
+            16.796669006347656
+          ],
+          "tail": [
+            -2.771841287612915,
+            -0.4764791429042816,
+            20.002775192260742
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "midd_dist",
+          "parent": "midd_midd",
+          "head": [
+            -2.771841287612915,
+            -0.4764791429042816,
+            20.002775192260742
+          ],
+          "tail": [
+            -2.753934383392334,
+            -0.2975718080997467,
+            22.361068725585938
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "index_meta",
+          "parent": "radius_ulna",
+          "head": [
+            -1.0785419940948486,
+            0.18815560638904572,
+            3.404228687286377
+          ],
+          "tail": [
+            -5.038503170013428,
+            -0.7351614832878113,
+            11.162676811218262
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            },
+            {
+              "type": "COPY_ROTATION",
+              "name": "Copy Rotation"
+            }
+          ]
+        },
+        {
+          "name": "index_prox",
+          "parent": "index_meta",
+          "head": [
+            -5.038503170013428,
+            -0.7351614832878113,
+            11.162676811218262
+          ],
+          "tail": [
+            -6.045973777770996,
+            -0.2745644748210907,
+            16.210460662841797
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "index_midd",
+          "parent": "index_prox",
+          "head": [
+            -6.045973777770996,
+            -0.2745644748210907,
+            16.210460662841797
+          ],
+          "tail": [
+            -6.350057601928711,
+            -0.017678216099739075,
+            18.916011810302734
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "index_dist",
+          "parent": "index_midd",
+          "head": [
+            -6.350057601928711,
+            -0.017678216099739075,
+            18.916011810302734
+          ],
+          "tail": [
+            -6.558981895446777,
+            0.16472944617271423,
+            21.177265167236328
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "thumb_trapez",
+          "parent": "radius_ulna",
+          "head": [
+            -1.0785419940948486,
+            0.18815560638904572,
+            3.404228687286377
+          ],
+          "tail": [
+            -6.532614231109619,
+            -0.749878466129303,
+            5.050626277923584
+          ],
+          "rotation_mode": "QUATERNION",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            },
+            {
+              "type": "COPY_ROTATION",
+              "name": "Copy Rotation"
+            }
+          ]
+        },
+        {
+          "name": "thumb_meta",
+          "parent": "thumb_trapez",
+          "head": [
+            -6.532614231109619,
+            -0.749878466129303,
+            5.050626277923584
+          ],
+          "tail": [
+            -8.889476776123047,
+            0.07943502813577652,
+            6.97206974029541
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "thumb_prox",
+          "parent": "thumb_meta",
+          "head": [
+            -8.889476776123047,
+            0.07943502813577652,
+            6.97206974029541
+          ],
+          "tail": [
+            -10.787629127502441,
+            0.19014579057693481,
+            9.444866180419922
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        },
+        {
+          "name": "thumb_dist",
+          "parent": "thumb_prox",
+          "head": [
+            -10.787629127502441,
+            0.19014579057693481,
+            9.444866180419922
+          ],
+          "tail": [
+            -11.992953300476074,
+            0.2292516976594925,
+            11.461177825927734
+          ],
+          "rotation_mode": "XYZ",
+          "constraints": [
+            {
+              "type": "LIMIT_ROTATION",
+              "name": "Limit Rotation"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "name": "Action",
+      "range": [
+        0.0,
+        0.0
+      ],
+      "slots": []
+    },
+    {
+      "name": "Pose_OK",
+      "range": [
+        1.0,
+        60.0
+      ],
+      "slots": [
+        "OBDo_HandRigged"
+      ]
+    },
+    {
+      "name": "RigAction",
+      "range": [
+        1.0,
+        300.0
+      ],
+      "slots": [
+        "OBDo_HandRigged"
+      ]
+    }
+  ]
+}

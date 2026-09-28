@@ -1,0 +1,350 @@
+{
+  "hand_detector": {
+    "black": {
+      "regressors": {
+        "max_abs": 0.0004730224609375,
+        "mean_abs": 2.2010464817867614e-05,
+        "shape": [
+          1,
+          2016,
+          18
+        ]
+      },
+      "scores": {
+        "max_abs": 0.000102996826171875,
+        "mean_abs": 8.951104064180981e-06,
+        "shape": [
+          1,
+          2016,
+          1
+        ]
+      }
+    },
+    "white": {
+      "regressors": {
+        "max_abs": 0.00018310546875,
+        "mean_abs": 1.6474024960189126e-05,
+        "shape": [
+          1,
+          2016,
+          18
+        ]
+      },
+      "scores": {
+        "max_abs": 2.6226043701171875e-05,
+        "mean_abs": 6.225965535122668e-06,
+        "shape": [
+          1,
+          2016,
+          1
+        ]
+      }
+    },
+    "random": {
+      "regressors": {
+        "max_abs": 0.00017452239990234375,
+        "mean_abs": 1.2333314771240111e-05,
+        "shape": [
+          1,
+          2016,
+          18
+        ]
+      },
+      "scores": {
+        "max_abs": 2.0503997802734375e-05,
+        "mean_abs": 4.1662938201625366e-06,
+        "shape": [
+          1,
+          2016,
+          1
+        ]
+      }
+    },
+    "hand": {
+      "regressors": {
+        "max_abs": 0.00011539459228515625,
+        "mean_abs": 9.453317943552975e-06,
+        "shape": [
+          1,
+          2016,
+          18
+        ]
+      },
+      "scores": {
+        "max_abs": 2.574920654296875e-05,
+        "mean_abs": 3.4883223634096794e-06,
+        "shape": [
+          1,
+          2016,
+          1
+        ]
+      }
+    },
+    "hand_rotated": {
+      "regressors": {
+        "max_abs": 9.1552734375e-05,
+        "mean_abs": 9.531307114230003e-06,
+        "shape": [
+          1,
+          2016,
+          18
+        ]
+      },
+      "scores": {
+        "max_abs": 2.002716064453125e-05,
+        "mean_abs": 3.4226068237330765e-06,
+        "shape": [
+          1,
+          2016,
+          1
+        ]
+      }
+    },
+    "hand_mirrored": {
+      "regressors": {
+        "max_abs": 0.0001068115234375,
+        "mean_abs": 1.0467923857504502e-05,
+        "shape": [
+          1,
+          2016,
+          18
+        ]
+      },
+      "scores": {
+        "max_abs": 2.288818359375e-05,
+        "mean_abs": 3.801961838689749e-06,
+        "shape": [
+          1,
+          2016,
+          1
+        ]
+      }
+    }
+  },
+  "hand_landmarks_detector": {
+    "black": {
+      "landmarks": {
+        "max_abs": 9.1552734375e-05,
+        "mean_abs": 2.5824901968007907e-05,
+        "shape": [
+          1,
+          63
+        ]
+      },
+      "presence": {
+        "max_abs": 4.237517714500427e-08,
+        "mean_abs": 4.237517714500427e-08,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "handedness": {
+        "max_abs": 1.0728836059570312e-06,
+        "mean_abs": 1.0728836059570312e-06,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "world_landmarks": {
+        "max_abs": 3.0640512704849243e-07,
+        "mean_abs": 9.738141670823097e-08,
+        "shape": [
+          1,
+          63
+        ]
+      }
+    },
+    "white": {
+      "landmarks": {
+        "max_abs": 0.000255584716796875,
+        "mean_abs": 7.56127483327873e-05,
+        "shape": [
+          1,
+          63
+        ]
+      },
+      "presence": {
+        "max_abs": 3.632158041000366e-08,
+        "mean_abs": 3.632158041000366e-08,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "handedness": {
+        "max_abs": 6.556510925292969e-07,
+        "mean_abs": 6.556510925292969e-07,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "world_landmarks": {
+        "max_abs": 3.983441274613142e-07,
+        "mean_abs": 1.234639910308033e-07,
+        "shape": [
+          1,
+          63
+        ]
+      }
+    },
+    "random": {
+      "landmarks": {
+        "max_abs": 0.0001068115234375,
+        "mean_abs": 2.861780194507446e-05,
+        "shape": [
+          1,
+          63
+        ]
+      },
+      "presence": {
+        "max_abs": 3.259629011154175e-09,
+        "mean_abs": 3.259629011154175e-09,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "handedness": {
+        "max_abs": 4.172325134277344e-07,
+        "mean_abs": 4.172325134277344e-07,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "world_landmarks": {
+        "max_abs": 3.4924596548080444e-07,
+        "mean_abs": 8.368459702978726e-08,
+        "shape": [
+          1,
+          63
+        ]
+      }
+    },
+    "hand": {
+      "landmarks": {
+        "max_abs": 0.0001220703125,
+        "mean_abs": 2.517018947401084e-05,
+        "shape": [
+          1,
+          63
+        ]
+      },
+      "presence": {
+        "max_abs": 5.960464477539063e-08,
+        "mean_abs": 5.960464477539063e-08,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "handedness": {
+        "max_abs": 1.1920928955078125e-07,
+        "mean_abs": 1.1920928955078125e-07,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "world_landmarks": {
+        "max_abs": 2.998858690261841e-07,
+        "mean_abs": 6.48904574518383e-08,
+        "shape": [
+          1,
+          63
+        ]
+      }
+    },
+    "hand_rotated": {
+      "landmarks": {
+        "max_abs": 0.0003204345703125,
+        "mean_abs": 3.6360728699946776e-05,
+        "shape": [
+          1,
+          63
+        ]
+      },
+      "presence": {
+        "max_abs": 2.980232238769531e-07,
+        "mean_abs": 2.980232238769531e-07,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "handedness": {
+        "max_abs": 4.172325134277344e-07,
+        "mean_abs": 4.172325134277344e-07,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "world_landmarks": {
+        "max_abs": 3.650784492492676e-07,
+        "mean_abs": 7.811283353476028e-08,
+        "shape": [
+          1,
+          63
+        ]
+      }
+    },
+    "hand_mirrored": {
+      "landmarks": {
+        "max_abs": 0.0001068115234375,
+        "mean_abs": 1.8937247659778222e-05,
+        "shape": [
+          1,
+          63
+        ]
+      },
+      "presence": {
+        "max_abs": 0.0,
+        "mean_abs": 0.0,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "handedness": {
+        "max_abs": 2.2351741790771484e-07,
+        "mean_abs": 2.2351741790771484e-07,
+        "shape": [
+          1,
+          1
+        ]
+      },
+      "world_landmarks": {
+        "max_abs": 3.241002559661865e-07,
+        "mean_abs": 5.5332559867338205e-08,
+        "shape": [
+          1,
+          63
+        ]
+      }
+    }
+  },
+  "_validation": {
+    "atol": 0.002,
+    "rtol": 0.002,
+    "runtime": "ncnn 20260526",
+    "conversion_toolchain": {
+      "pnnx_release": "20260704",
+      "pnnx_sha256": "57140e8c34ef150e1b0e1c2238515c1228e2a800d5f146fb0dc962b4fc624aec"
+    },
+    "probe_sha256": "38f07d774fcfde91b4461622aa75f472602b4b517336b6d495ac6e978b74ea17",
+    "converted_sha256": {
+      "hand_detector.bin": "99191a6c2849707c543a20c9c38ead7911896c40981d490813f814bed7acc634",
+      "hand_detector.param": "6dd97ccc511349b50b474c53c0b62b08cd6febe21911fa0adcc98cddf0c316b3",
+      "hand_landmarks_detector.bin": "0e539f8555f44ce7da7164e61433190cb0de86fe3679ffbc4aef962d7eb18ec1",
+      "hand_landmarks_detector.param": "223f64c99337b61b57493b30c8e187409fc10fcb0c86501fb28a86b1d3524b6b"
+    },
+    "source_sha256": {
+      "hand_detector.tflite": "945f713bc23570bd4ed60f848c401dc8eaf95713183d43ba14cf12e467d27a7d",
+      "hand_landmarks_detector.tflite": "6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9"
+    }
+  }
+}

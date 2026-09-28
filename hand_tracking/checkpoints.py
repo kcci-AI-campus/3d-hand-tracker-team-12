@@ -1,15 +1,13 @@
 """Checkpoints: model and input layout together (including pre-refactor checkpoints), and
-the full training state for resuming. `architecture` selects HandTransformer or HandLite;
-checkpoints without it are HandTransformer."""
+the full training state for resuming. `architecture` names the model class."""
 from dataclasses import asdict, dataclass
 import torch
-from .config import SamplingConfig, config_class
+from .config import SamplingConfig, saved_config
+from .direct import DirectStream, HandDirect
 from .lite import HandLite, LiteStream
-from .model import HandTransformer
-from .stream import EventStream
 
-MODELS = {'transformer': HandTransformer, 'lite': HandLite}
-STREAMS = {HandTransformer: EventStream, HandLite: LiteStream}
+MODELS = {'lite': HandLite, 'direct': HandDirect}
+STREAMS = {HandLite: LiteStream, HandDirect: DirectStream}
 
 
 def architecture_of(model):
@@ -21,13 +19,13 @@ def build_model(architecture, config):
 
 
 def stream_for(model):
-    """Event-by-event runner of either architecture (results equal forward())."""
+    """Event-by-event runner of the model (results equal forward())."""
     return STREAMS[type(model)](model)
 
 
 INPUT_CONTRACT = ('events [B,E,2,21,14]+valid+camera+capture/arrival seconds+present, query '
-                  'times [B,Q] seconds -> pose [B,Q,2,21,3], calibration per event [B,E,3,6] (transformer) '
-                  'or per query [B,Q,3,6] (lite); or stream_for(model) event by event; XYZ world units')
+                  'times [B,Q] seconds -> pose [B,Q,2,21,3], calibration per query [B,Q,3,6] (lite); '
+                  'or stream_for(model) event by event; XYZ world units')
 
 
 @dataclass
@@ -46,8 +44,11 @@ def save_checkpoint(path, value):
 
 def load_checkpoint(path, device='cpu'):
     saved = torch.load(path, map_location='cpu', weights_only=True)
-    architecture = saved.get('architecture', 'transformer')
-    model = build_model(architecture, config_class(architecture)(**saved['model_config'])).to(device)
+    architecture = saved.get('architecture')
+    if architecture not in MODELS:
+        raise ValueError(f'Unsupported checkpoint architecture {architecture!r} '
+                         f'(HandTransformer was removed); choose from {sorted(MODELS)}')
+    model = build_model(architecture, saved_config(architecture, saved['model_config'])).to(device)
     model.load_state_dict(saved['model'])
     model.eval()
     return LoadedCheckpoint(model, SamplingConfig.from_checkpoint(saved), saved)

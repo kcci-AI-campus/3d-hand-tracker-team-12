@@ -3,5 +3,13 @@
 runs/
 .tools/
 __pycache__/
-models/*.task
-models/*.part
+camera/models/*.task
+camera/models/*.part
+
+# Generated data, builds and release archives
+exports/
+dist/
+build/
+build-*/
+*.zip
+*.log

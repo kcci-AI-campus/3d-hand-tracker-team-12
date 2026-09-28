@@ -14,7 +14,7 @@ class BatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             archive = root/'motion.tar.gz'
-            payload = json.dumps(demo_motion(20)[0].tolist()).encode()
+            payload = json.dumps(demo_motion(90)[0].tolist()).encode()
             with tarfile.open(archive, 'w:gz') as tar:
                 for name in ('keypoints_3d/a.json', 'keypoints_3d/b.json'):
                     info = tarfile.TarInfo(name); info.size = len(payload)

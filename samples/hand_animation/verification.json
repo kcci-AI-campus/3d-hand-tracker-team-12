@@ -1,0 +1,17 @@
+{
+  "native_bones": 21,
+  "fps": 30,
+  "rendered_frames": 120,
+  "video_seconds": 4,
+  "native_pose_vertex_displacement_cm": 15.633379741218882,
+  "native_loop_error_cm": 0.0,
+  "glb_animation_count": 1,
+  "glb_open_bounds_m": [
+    0.16772394999861717,
+    0.05400660261511803,
+    0.22952477098442614
+  ],
+  "glb_pose_vertex_displacement_m": 0.15659454368486397,
+  "glb_loop_error_m": 0.0,
+  "checks": "PASS: native deformation, loop closure, GLB skin/animation, reimport deformation and metre scale"
+}

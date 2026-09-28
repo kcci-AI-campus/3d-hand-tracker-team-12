@@ -1,0 +1,12 @@
+{
+  "url": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+  "retrieved_utc": "2026-09-23T10:17:38.245483+00:00",
+  "last_modified": "Wed, 26 Apr 2023 03:33:25 GMT",
+  "etag": "\"15318430ea3851670fe9914116a9cfad\"",
+  "sha256": "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1",
+  "size_bytes": 7819105,
+  "model_sha256": {
+    "hand_detector": "945f713bc23570bd4ed60f848c401dc8eaf95713183d43ba14cf12e467d27a7d",
+    "hand_landmarks_detector": "6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9"
+  }
+}

@@ -23,15 +23,15 @@ def camera_frame(origin, rotation, intrinsics, width, height, depth=.45):
 
 PARAMETER_HELP = {
     'timing_profile': '기본 profiles/pi_c270_timing.json. 실측 촬영 간격·처리 대기·전송 지연을 같은 행으로 재생합니다. 카메라마다 시작 행을 랜덤 선택합니다. 이 모드에서는 camera_fps, capture_jitter_ms, processing_ms, latency_ms, latency_jitter_ms, rolling_shutter_ms 수동값을 무시합니다. 빈칸이면 수식 모드입니다.',
-    'world_unit_cm': '1 월드 단위의 실제 길이(cm)입니다. 기본 30이면 (-1,1) 공간은 축마다 -30~30cm, 전체 60cm입니다. 좌표 숫자는 유지하며 물리 단위를 정의합니다. 원본 단위 변환은 scale로 별도 지정하세요.',
-    'position_limit_cm': '카메라 위치 오차 벡터의 전체 길이 상한(cm)입니다. 기본 3cm = 0.1 월드 단위. 축별 상한이 아닙니다. 초과한 Gaussian 표본은 다시 뽑습니다. 0이면 위치 오차가 없습니다.',
+    'world_unit_cm': '1 월드 단위의 실제 길이(cm)입니다. 기본 40이면 (-1,1) 공간은 축마다 -40~40cm, 전체 80cm입니다. 좌표 숫자는 유지하며 물리 단위를 정의합니다. 원본 단위 변환은 scale로 별도 지정하세요.',
+    'position_limit_cm': '카메라 위치 오차 벡터의 전체 길이 상한(cm)입니다. 기본은 상한 없음(null)입니다. 축별 상한이 아닙니다. 초과한 Gaussian 표본은 다시 뽑습니다. 0이면 위치 오차가 없습니다.',
     'angle_limit_deg': '카메라의 실제 상대 회전각 상한(도)입니다. 기본 10°. 회전벡터 전체 길이를 제한하며 초과 표본은 다시 뽑습니다. 0이면 방향 오차가 없습니다.',
     'randomize_errors': '기본 true. 오차 강도·확률을 error_ranges에서 시퀀스마다 뽑습니다. 동일 seed는 동일 결과입니다. 화각·해상도·명목 내부 파라미터는 고정됩니다. false면 수동 오차값을 사용하지만 timing_profile의 시간 재생은 유지됩니다.',
     'error_ranges': '랜덤화할 변수별 [최솟값,최댓값] JSON입니다. 범위 편집 버튼으로 수정하세요. 위치·각도 범위는 오차 자체의 상한이 아니라 Gaussian 표준편차를 뽑는 범위입니다. 포함된 변수의 수동 값은 랜덤 모드에서 사용하지 않습니다.',
     'source_fps': '원본 애니메이션의 초당 프레임 수입니다. 파일에 timestamps가 없을 때만 사용합니다. 실제 원본 FPS에 맞추세요. 데모는 30 FPS입니다.',
     'camera_fps': '수식 모드에서 사용할 관측 FPS입니다. 기본 17.1은 실측 송신 관측률에 가깝게 설정한 값입니다. timing_profile을 사용하면 이 값 대신 실측 촬영 간격을 재생합니다. 원본 애니메이션 FPS는 source_fps로 따로 지정합니다.',
     'output_fps': '학습 정답을 생성하는 초당 예측 시점 수입니다. 각 시점까지 도착한 관측으로 그 시점의 3D 자세를 예측합니다.',
-    'scale': '원본 좌표를 월드 단위로 바꾸는 배율입니다. fit_extent=0일 때 적용됩니다. 1월드=30cm 기준 원본 mm는 1/300(약 0.00333333), cm는 1/30, m는 1/0.3을 사용합니다. 카메라 위치에는 적용하지 않습니다.',
+    'scale': '원본 좌표를 월드 단위로 바꾸는 배율입니다. fit_extent=0일 때 적용됩니다. 1월드=40cm 기준 원본 mm는 1/400, cm는 1/40, m는 2.5을 사용합니다. 카메라 위치에는 적용하지 않습니다.',
     'center': 'true이면 시퀀스 전체의 좌표 최솟값·최댓값으로 구한 중심을 원점으로 옮깁니다. 모든 프레임에 같은 이동을 적용하므로 손의 이동은 유지됩니다.',
     'fit_extent': '0보다 크면 가장 먼 좌표의 절댓값이 이 값이 되도록 시퀀스 전체를 균일 확대·축소합니다. 범위: 0 이상 1 미만. 0이면 scale 사용. 자동 맞춤은 실제 손 크기를 바꿉니다.',
     'axis_order': '원본 손 좌표의 축을 읽는 순서입니다. xyz는 그대로, xzy는 원본 Y/Z 교환입니다. 카메라 위치나 월드 좌표계 정의에는 적용되지 않습니다.',
@@ -41,13 +41,13 @@ PARAMETER_HELP = {
     'seed': '0 이상의 정수 난수 시드입니다. 같은 입력·설정·시드를 사용하면 같은 오차와 지연을 재현합니다. 다른 시드로 증강 변형을 만듭니다.',
     'window': 'Transformer 입력으로 묶는 연속 예측 프레임 수입니다. 양의 정수. 16이면 최대 16×3×2×21=2016개 토큰이며 정답은 마지막 시점의 두 손 자세입니다.',
     'stride': '연속 학습 윈도의 시작점을 몇 출력 프레임씩 이동할지 지정합니다. 양의 정수. 1이면 한 프레임씩 이동하여 윈도가 많이 겹칩니다.',
-    'cameras': '세 카메라의 명목 월드 위치 [x,y,z]입니다. 기본값은 [[-1,-1,0.5],[1,-1,0.5],[0,1,1]]. 1월드=30cm에서 실제 위치는 (-30,-30,15), (30,-30,15), (0,30,30)cm입니다.',
+    'cameras': '세 카메라의 명목 월드 위치 [x,y,z]입니다. 기본값은 [[-1,-1,0.5],[1,-1,0.5],[0,1,1]]. 1월드=40cm에서 실제 위치는 (-40,-40,20), (40,-40,20), (0,40,40)cm입니다.',
     'targets': '각 카메라가 바라보는 월드 좌표 [x,y,z] 3개입니다. [[0,0,0],[0,0,0],[0,0,0]]은 모두 원점을 바라봅니다. 카메라 위치와 같은 점은 지정할 수 없습니다.',
     'width': '투영 영상의 가로 해상도입니다. 단위: 픽셀, 양의 정수. 기본 320. 실측 intrinsics를 쓰면 이 해상도에 맞춘 보정값을 함께 입력하세요.',
     'height': '투영 영상의 세로 해상도입니다. 단위: 픽셀, 양의 정수. 기본 240. 영상 v 좌표는 아래쪽으로 증가합니다.',
     'diagonal_fov': '대각 화각입니다. 단위: 도, 1 초과 170 미만. intrinsics가 비어 있을 때 초점 거리를 추정합니다. 기본 55°는 C270 초기 추정값이며 320×240 실측 보정값은 아닙니다.',
     'intrinsics': '카메라별 [fx,fy,cx,cy] 배열 3개입니다. 모두 픽셀 단위. fx/fy는 초점 거리, cx/cy는 주점입니다. []이면 화각으로 추정합니다. 값을 입력하면 diagonal_fov보다 우선합니다.',
-    'position_std': '카메라별 위치 오차를 뽑는 축별 Gaussian 표준편차(월드 단위)입니다. 1월드=30cm에서 0.033333은 1cm입니다. 벡터 전체 오차가 position_limit_cm를 넘으면 다시 뽑습니다. 0이면 위치 오차가 없습니다.',
+    'position_std': '카메라별 위치 오차를 뽑는 축별 Gaussian 표준편차(월드 단위)입니다. 1월드=40cm에서 0.025는 1cm입니다. 벡터 전체 오차가 position_limit_cm를 넘으면 다시 뽑습니다. 0이면 위치 오차가 없습니다.',
     'angle_std_deg': '카메라별 yaw·pitch 오차의 Gaussian 표준편차(도)입니다. Roll은 항상 0이며 카메라 화면의 수평을 유지합니다. 설정 파일에 각도 상한이 있으면 합성 회전각을 제한합니다. 시퀀스 동안 고정됩니다.',
     'focal_std_pct': '카메라별 fx/fy 오차 크기입니다. 입력값/100을 로그 배율의 표준편차로 사용합니다. 작은 값에서는 대략 퍼센트 오차이며 1은 약 1%입니다. 시퀀스 동안 고정됩니다.',
     'principal_std_px': '카메라별 주점 cx/cy 오차의 Gaussian 표준편차입니다. 단위: 픽셀. 시퀀스 동안 고정되며 ray 계산에는 명목 주점을 사용합니다.',
@@ -56,7 +56,7 @@ PARAMETER_HELP = {
     'pixel_std': '검출된 각 관절의 u/v 좌표에 추가하는 독립 Gaussian 노이즈의 표준편차입니다. 단위: 픽셀. 1이면 각 축에 표준편차 1px의 흔들림을 적용합니다.',
     'outlier_prob': '관절마다 큰 검출 오차가 추가될 확률입니다. 범위: 0~1. 0.01은 1%이며 크기는 outlier_std_px로 설정합니다.',
     'outlier_std_px': '이상치로 선택된 관절에 추가하는 Gaussian 오차의 표준편차입니다. 단위: 픽셀. 일반 pixel_std 노이즈에 더해집니다.',
-    'missing_prob': '각 관절 관측을 무작위로 누락할 확률입니다. 범위: 0~1. 0.02는 2%. 누락된 입력은 0으로 채우고 마스크를 false로 저장합니다. 실제 표면 가림을 계산하는 것은 아닙니다.',
+    'missing_prob': '이전 설정 호환용입니다. 관절별 무작위 누락은 제거되어 값과 관계없이 적용하지 않습니다.',
     'packet_loss': '카메라 프레임 전체가 통신 중 손실될 확률입니다. 범위: 0~1. 양손 관측이 함께 손실되며 기존에 도착한 프레임은 max_age_ms까지 사용할 수 있습니다.',
     'latency_ms': '통신 지연을 샘플링하는 Gaussian 분포의 평균 파라미터입니다. 단위: ms. 음수 샘플은 0으로 제한하므로 실제 평균은 달라질 수 있습니다. 처리·롤링셔터 시간은 별도로 더합니다.',
     'latency_jitter_ms': '프레임마다 달라지는 통신 지연의 표준편차입니다. 단위: ms. 클수록 도착 간격이 불규칙해지고 프레임 도착 순서가 뒤바뀔 수 있습니다.',
@@ -171,13 +171,48 @@ class App:
             for bound, text in enumerate(['최소', '최대']):
                 field(noise, 1+row*2+bound, f'{label} {text} ({unit})', self.pose_vars[name][bound],
                       '클립마다 이 범위에서 축별 표준편차를 선택합니다. 상한 없이 정규분포로 뽑습니다. 최소와 최대가 같으면 표준편차가 고정됩니다. 클립 안에서는 위치·각도 오차가 유지됩니다.')
-        ttk.Label(noise, text='Roll 0° 고정 · Yaw/Pitch만 무작위 · 상한 없음\n최소=최대이면 표준편차 고정, 실제 오차는 매번 추출합니다.', wraplength=290).grid(row=7, column=0, columnspan=2, sticky='w', pady=16)
+        ttk.Label(noise, text='Roll 0° 고정 · Yaw/Pitch만 무작위 · 상한 없음\n카메라 1·2: Y 이동 오차 공유 (X/Z·회전은 독립)\n최소=최대이면 표준편차 고정, 실제 오차는 매번 추출합니다.', wraplength=290).grid(row=7, column=0, columnspan=2, sticky='w', pady=16)
         data = ttk.Frame(tabs, padding=12); tabs.add(data, text='학습 데이터')
-        for row, (name, label) in enumerate([('source_fps', '원본 FPS'), ('output_fps', '출력 FPS'),
+        robust = ttk.Frame(tabs, padding=12); tabs.add(robust, text='추가 증강')
+        for row, (name,label,help_text) in enumerate([
+            ('burst_dropout_prob','연속 누락 시작 확률','촬영마다 손별 확률. 기본 0.01. 기존 독립 5% 드롭과 별도이며 0이면 끕니다.'),
+            ('burst_frames_min','연속 누락 최소 프레임','기본 2. 카메라 촬영 프레임 수 기준입니다.'),
+            ('burst_frames_max','연속 누락 최대 프레임','기본 5. 촬영 FPS에 따라 실제 지속 시간이 달라집니다.'),
+            ('correlated_pixel_std','이어지는 좌표 오차 (px)','기본 0.1px. 정상 상태 표준편차. 0이면 끕니다.'),
+            ('correlated_pixel_rho','오차 유지 비율','0~1 미만. 기본 0.85. 이전 촬영 오차가 다음 촬영에 이어지는 정도입니다.'),
+            ('inference_jitter_ms','추론 시간 흔들림 (ms)','기본 표준편차 1ms. 손 수 기반 시간에 적용하는 증강 가정입니다.'),
+            ('inference_stall_prob','추가 지연 확률','기본 0.005. 발생하면 10~40ms 추가합니다. 실측 분포가 아닌 가정입니다.'),
+            ('contact_augmentation_factor','접촉 시 크기 변동 비율','기본 0.25: 크기/길이 변동 폭을 1/4로 줄입니다. 0이면 크기를 보존합니다.')]):
+            field(robust,row,label,self.vars[name],help_text)
+        ttk.Checkbutton(robust,text='Contact-sensitive Clip',variable=self.vars['contact_sensitive'],
+                        onvalue='true',offvalue='false').grid(row=8,column=0,columnspan=2,sticky='w',pady=8)
+        ttk.Label(robust,text='양손 관절이 2cm 이내로 접근하면 자동 완화합니다.\n물체 접촉 클립은 위 옵션을 켜세요.\n물체 메시가 없어 실제 접촉을 보장하지는 않습니다.',wraplength=290).grid(row=9,column=0,columnspan=2,sticky='w')
+        shape = ttk.Frame(tabs, padding=12); tabs.add(shape, text='손 크기')
+        ttk.Checkbutton(shape, text='Randomize Hand Shape', variable=self.vars['randomize_hand_shape'],
+                        onvalue='true', offvalue='false').grid(row=0, column=0, columnspan=2, sticky='w', pady=10)
+        field(shape, 1, '손 전체 크기 (±%)', self.vars['hand_size_percent'],
+              '10이면 원본 대비 90~110%에서 균등 추출합니다. 손목 위치는 유지하고 손바닥과 손가락을 함께 조절합니다.')
+        field(shape, 2, '손가락 길이 (±%)', self.vars['finger_length_percent'],
+              '5이면 각 손가락의 뼈 길이를 추가로 95~105% 조절합니다. 관절 방향은 유지하고 양손에 같은 비율을 적용합니다.')
+        ttk.Label(shape, text='클립 내 비율 고정 · 양손 비율 공유\nApply로 씬에 반영합니다.\n다른 모양은 학습 데이터 탭의 난수 번호를 바꿔주세요.\n카메라 Randomize는 손 모양을 바꾸지 않습니다.',
+                  wraplength=290, justify='left').grid(row=3, column=0, columnspan=2, sticky='w', pady=16)
+        for row, (name, label) in enumerate([('source_fps', '원본 FPS'), 
                                             ('window', '입력 프레임 수'), ('stride', '샘플 간격 (프레임)'), ('seed', '난수 번호')]):
             field(data, row, label, self.vars[name], PARAMETER_HELP[name])
+        ttk.Label(data, text='Output Query: Pi 3 Local Ready', wraplength=290).grid(row=4,column=0,columnspan=2,sticky='w')
         self.processing_summary = tk.StringVar()
-        ttk.Label(data, textvariable=self.processing_summary, wraplength=290, justify='left').grid(row=5, column=0, columnspan=2, sticky='w', pady=16)
+        field(data, 5, '화면 밖 관절 기준 (개)', self.vars['hand_outside_keypoint_threshold'],
+              '기본 5: 21개 중 5개 이상이 화면 밖/카메라 뒤/결측이면 손 전체를 입력에서 제외합니다. 거리 제한은 없습니다.')
+        field(data, 6, '기준 손 드롭 확률 (0~1)', self.vars['hand_dropout_prob'],
+              '기본 0.05=5%. 거리 가중 ON이면 기본 곡선상 75cm에서의 확률입니다. 촬영별 손별 추론 후 누락이며 같은 촬영을 재사용하면 결과가 유지됩니다.')
+        ttk.Checkbutton(data,text='Distance-weighted Dropout',variable=self.vars['distance_dropout_enabled'],
+                        onvalue='true',offvalue='false').grid(row=7,column=0,columnspan=2,sticky='w',pady=8)
+        ttk.Label(data,text='기본: ≤50cm 1~2% · 75cm 5%\n100cm 10% · ≥150cm 20%\n연속 누락 시작 확률도 같은 비율로 조절합니다.\n거리만으로 손을 무조건 제외하지 않습니다.',wraplength=290).grid(row=8,column=0,columnspan=2,sticky='w')
+        ttk.Label(data, textvariable=self.processing_summary, wraplength=290, justify='left').grid(row=9, column=0, columnspan=2, sticky='w', pady=16)
+        field(data, 10, '배경 오인식 시작 확률 (0~1)', self.vars['false_positive_prob'],
+              '기본 0.01: 카메라별 촬영마다 1%로 오인식 시작, 1~3 촬영 프레임 지속. 0이면 OFF. 빈 손 슬롯 우선, 양손 인식 중이면 한 슬롯을 교체합니다. 정답은 유지합니다.')
+        field(data, 11, '손 겹침 누락 강도 (0~1)', self.vars['overlap_dropout_max'],
+              '기본 0.8: 화면상의 손 영역이 15% 이상 겹치면 누락 확률 증가. 완전히 가려진 뒤쪽 손 최대 80%, 앞쪽 손 최대 20%. 0이면 OFF. 정답은 유지합니다.')
         timing = ttk.Frame(tabs, padding=12); tabs.add(timing, text='프레임 지연')
         self.timing_mode = tk.StringVar()
         ttk.Label(timing, text='지연 생성 방식').grid(row=0, column=0, sticky='w', pady=8)
@@ -194,6 +229,12 @@ class App:
         ttk.Label(timing, textvariable=self.timing_hint, wraplength=300, justify='left').grid(row=7, column=0, columnspan=2, sticky='w', pady=10)
         self.timing_summary = tk.StringVar(value='적용 후 사용된 지연을 표시합니다.')
         ttk.Label(timing, textvariable=self.timing_summary, wraplength=300, justify='left').grid(row=8, column=0, columnspan=2, sticky='w', pady=8)
+        ttk.Checkbutton(timing, text='Hand-dependent Timing', variable=self.vars['hand_count_timing'],
+                        onvalue='true', offvalue='false').grid(row=9, column=0, columnspan=2, sticky='w')
+        field(timing, 10, '손 0/1/2개 추론 (ms)', self.vars['hand_inference_ms'],
+              '예: [27,56,85.5]. 켜면 고정 처리 시간과 기존 실측 프레임 간격을 대체합니다. 실측 프로필에서는 전송 지연만 사용합니다. 학습 데이터 탭의 화면 밖 관절 기준으로 처리할 손 수를 근사합니다.')
+        field(timing, 11, '추론 전 FPS 상한', self.vars['hand_timing_base_fps'],
+              '기본 19. 프레임 간격=max(1000/FPS, 손 수별 추론 ms). 촬영 버퍼 대기는 별도 측정되지 않았습니다.')
         self.sync_form(cfg)
         view = ttk.Frame(body); body.add(view, weight=1)
         ttk.Label(view, text='카메라: 회색 점선 = 명목 / 분홍 실선 = 실제 (실제 크기) • 드래그 회전 / 휠 확대\n손 = 3D 정답 • 손목 ray = 명목 보정값으로 계산한 모델 입력', padding=6).pack(fill='x')
@@ -240,7 +281,7 @@ class App:
         target_text = '세 카메라는 원점을 바라봅니다.' if np.allclose(cfg.targets, 0) else '시선 방향: 불러온 설정 사용'
         self.camera_summary.set(f'{target_text}\n해상도 {cfg.width} × {cfg.height} · 대각 화각 {cfg.diagonal_fov:g}°\n1 월드 단위 = {cfg.world_unit_cm:g} cm')
         timing = '실측 촬영 간격과 지연 사용' if cfg.timing_profile else '설정 파일의 시간 모델 사용'
-        self.processing_summary.set(f'{timing}\n프레임 지연 탭에서 확인·변경할 수 있습니다.')
+        self.processing_summary.set(f'{timing}\n원본→월드 배율 {cfg.scale:g} · '+('자동 크기 맞춤 사용' if cfg.fit_extent else '자동 크기 맞춤 끔')+'\n기본: 원본 m 기준, 1월드=40cm')
         self.timing_mode.set('실측 재생' if cfg.timing_profile else '수동 설정')
         if not cfg.timing_profile and cfg.randomize_errors:
             for name in ('processing_ms', 'latency_ms', 'latency_jitter_ms', 'capture_jitter_ms'):
@@ -259,6 +300,11 @@ class App:
         meta = json.loads(self.result['metadata'])
         cfg = meta['config']
         replay = meta.get('timing_replay')
+        if cfg.get('hand_count_timing'):
+            costs = cfg['hand_inference_ms']
+            self.timing_summary.set('적용됨: 손 수에 따른 처리 시간\n0/1/2개: '+str(costs)+' ms\n'+
+                ('실측 전송 지연만 사용' if replay else '수동 전송 지연 사용')+' · 기존 처리 지연은 중복 적용하지 않음')
+            return
         if replay:
             summary = replay.get('summary') or {}
             total = summary.get('capture_to_arrival_ms', {})
@@ -283,6 +329,7 @@ class App:
             except ValueError as exc:
                 raise ValueError(f'{name}: invalid JSON value') from exc
         cfg = Config(**values)
+        cfg.query_sync_camera3 = True
         cfg.position_limit_cm = None
         cfg.angle_limit_deg = None
         cfg.cameras = [[float(var.get())/cfg.world_unit_cm for var in row] for row in self.camera_vars]
@@ -474,10 +521,14 @@ class App:
             else: messagebox.showerror('Operation failed', value); self.status.set(value)
         except queue.Empty: pass
         if self.playing and self.result is not None:
-            now = time.monotonic(); step = int((now-self.last_tick)*self.cfg.output_fps)
-            if step:
-                self.frame = (self.frame+step) % len(self.result['query_time'])
-                self.last_tick += step/self.cfg.output_fps; self.slider.set(self.frame)
+            now = time.monotonic()
+            times = self.result['query_time']
+            while len(times) > 1:
+                interval = (times[self.frame+1]-times[self.frame]) if self.frame+1 < len(times) else times[1]-times[0]
+                if now-self.last_tick < interval: break
+                self.frame = (self.frame+1) % len(times)
+                self.last_tick += interval
+            self.slider.set(self.frame)
         self.root.after(30, self.tick)
 
     def screen(self, points):

@@ -7,18 +7,18 @@ import unittest
 from model_helpers import small
 import torch
 from hand_tracking.checkpoints import load_checkpoint, restore_training, save_checkpoint, training_checkpoint
-from hand_tracking.config import ModelConfig, SamplingConfig, add_model_arguments, model_config_from_args
+from hand_tracking.config import LiteConfig, SamplingConfig, add_model_arguments, model_config_from_args
 from hand_tracking.contracts import ModelOutput
 from hand_tracking.engine import run_epoch
 from hand_tracking.events import accepted_captures
-from hand_tracking.model import HandTransformer
+from hand_tracking.lite import HandLite
 
 CPU = torch.device('cpu')
 
 
 class ZeroModel(torch.nn.Module):
     """Predicts zero pose and calibration, so metrics reduce to the targets."""
-    config = ModelConfig()
+    config = LiteConfig()
 
     def forward(self, features, valid, camera, capture, arrival, present, query, return_details=False):
         b, e = present.shape
@@ -33,8 +33,9 @@ def calibration_batch(target, events=2):
                 event_capture=(torch.arange(events).float()*.01-.1).expand(b,-1),
                 event_arrival=(torch.arange(events).float()*.01-.09).expand(b,-1),
                 event_present=torch.ones(b,events, dtype=torch.bool), query_times=torch.zeros(b,2),
-                target=torch.zeros(b,2,2,21,3), target_mask=torch.ones(b,2,2,21, dtype=torch.bool),
-                world_unit_cm=torch.full((b,), 30.), calibration_target=target)
+                target=torch.zeros(b,2,2,21,3), target_world=torch.zeros(b,2,2,21,3),
+                target_mask=torch.ones(b,2,2,21, dtype=torch.bool),
+                world_unit_cm=torch.full((b,), 40.), calibration_target=target)
 
 
 class MetricTests(unittest.TestCase):
@@ -59,20 +60,62 @@ class MetricTests(unittest.TestCase):
 
     def test_final_query_metrics(self):
         batch = calibration_batch(torch.full((1,3,6), float('nan')))
-        batch['target'][:,-1,...,0] = .1                                      # 3 cm at 30 cm per unit
+        batch['target'][:,-1,...,0] = .1                                      # 4 cm at 40 cm per unit
+        batch['target_world'][:,-1,...,1] = .2                                # 8 cm off in the world frame
         report = run_epoch(ZeroModel(), [batch], CPU)
-        self.assertAlmostEqual(report['mpjpe_mm'], 30., places=4)
+        self.assertAlmostEqual(report['mpjpe_mm'], 40., places=4)
+        self.assertAlmostEqual(report['mpjpe_world_mm'], 80., places=4)
         self.assertEqual((report['pck20'], report['samples'], report['joints'], report['batches']), (0., 1, 42, 1))
 
 
+class OptimizerStepTests(unittest.TestCase):
+    """Loss finite, gradient infinite (sqrt at 0): skipped with mixed precision, an error without."""
+
+    class Scaler:
+        """A GradScaler stand-in that is enabled on CPU."""
+        def __init__(self):
+            self.stepped = False
+        def is_enabled(self):
+            return True
+        def scale(self, loss):
+            return loss
+        def unscale_(self, optimizer):
+            pass
+        def step(self, optimizer):
+            if all(torch.isfinite(p.grad).all() for g in optimizer.param_groups for p in g['params']):
+                self.stepped = True
+                optimizer.step()
+        def update(self):
+            pass
+
+    def test_overflow_is_skipped_only_with_mixed_precision(self):
+        from hand_tracking.engine import optimizer_step
+        weight = torch.nn.Parameter(torch.zeros(1))
+        model = torch.nn.Module()
+        model.weight = weight
+        optimizer = torch.optim.SGD([weight], lr=.1)
+        loss = lambda: weight.abs().sqrt().sum()
+        scaler = self.Scaler()
+        self.assertFalse(optimizer_step(model, optimizer, scaler, loss()))
+        self.assertFalse(scaler.stepped)
+        self.assertEqual(float(weight), 0.)
+        with self.assertRaises(RuntimeError):
+            optimizer_step(model, optimizer, torch.amp.GradScaler('cuda', enabled=False), loss())
+
+
 class CheckpointTests(unittest.TestCase):
-    def test_legacy_checkpoint_restores_input_layout_and_weights(self):
-        model = HandTransformer(small()).eval()
-        saved = dict(model=model.state_dict(), model_config=asdict(model.config), training_options=dict(max_events=37))
+    def test_checkpoint_restores_input_layout_and_weights(self):
+        model = HandLite(small()).eval()
+        saved = dict(model=model.state_dict(), architecture='lite', model_config=asdict(model.config),
+                     training_options=dict(max_events=37))                  # sampling config before it was stored
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'legacy.pt'
             torch.save(saved, path)
             restored = load_checkpoint(path)
+            del saved['architecture']                                          # HandTransformer checkpoints had none
+            torch.save(saved, path)
+            with self.assertRaisesRegex(ValueError, 'architecture'):
+                load_checkpoint(path)
         self.assertEqual(restored.sampling.max_events, 37)
         self.assertFalse(restored.model.training)
         for name, value in model.state_dict().items():
@@ -86,7 +129,7 @@ class CheckpointTests(unittest.TestCase):
     def test_training_state_round_trip(self):
         def objects(seed):
             torch.manual_seed(seed)
-            model = HandTransformer(small())
+            model = HandLite(small())
             optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=4)
             return model, optimizer, scheduler, torch.amp.GradScaler('cuda', enabled=False)
@@ -114,20 +157,20 @@ class ConfigCliTests(unittest.TestCase):
         return model_config_from_args(parser.parse_args(list(argv)))
 
     def test_defaults_round_trip(self):
-        self.assertEqual(self.parse(), ModelConfig())
+        self.assertEqual(self.parse(), LiteConfig())
 
     def test_every_field_is_settable(self):
-        config = self.parse('--dim', '64', '--anchor-hold-s', '.25', '--sample-max-age-s', '.15',
-                            '--anchor-ray-gate', '.2', '--anchor-motion-fit', '--no-calibration-head')
-        self.assertEqual((config.dim, config.anchor_hold_s, config.sample_max_age_s, config.anchor_ray_gate),
-                         (64, .25, .15, .2))
-        self.assertTrue(config.anchor_motion_fit)
+        config = self.parse('--dim', '32', '--anchor-hold-s', '.25', '--sample-max-age-s', '.15',
+                            '--ray-outlier-ratio', '6', '--no-anchor-ray-depth', '--no-calibration-head')
+        self.assertEqual((config.dim, config.anchor_hold_s, config.sample_max_age_s, config.ray_outlier_ratio),
+                         (32, .25, .15, 6.))
+        self.assertFalse(config.anchor_ray_depth)
         self.assertFalse(config.calibration_head)
 
     def test_invalid_config_is_rejected(self):
-        for overrides in (dict(dim=10, heads=4), dict(event_span_s=0.), dict(anchor_ray_gate=0.)):
+        for overrides in (dict(dim=10, heads=4), dict(event_span_s=0.), dict(ray_outlier_ratio=-1.)):
             with self.subTest(**overrides), self.assertRaises(ValueError):
-                ModelConfig(**overrides)
+                LiteConfig(**overrides)
 
 
 if __name__ == '__main__':

@@ -9,11 +9,16 @@ import time
 
 from gigahands_sim import Config, load_motion, simulate, save_dataset
 from motion_archive import list_motion_members, MAX_MEMBER_BYTES
+from dataset_quality import provenance, atomic_json
 
 
 def run(archive, output, cfg, variants=3, max_bytes=5_000_000_000, notify=None, cancelled=lambda: False, resume=False):
     archive, output = Path(archive), Path(output)
     output.mkdir(parents=True, exist_ok=resume)
+    identity=provenance(archive,cfg)
+    if resume:
+        if json.loads((output/'provenance.json').read_text())!=identity: raise ValueError('Resume provenance mismatch')
+    else: atomic_json(output/'provenance.json',identity)
     started = time.monotonic()
     state = dict(status='indexing', archive=str(archive.resolve()), clips_total=0,
                  clips_done=0, clips_failed=0, files=0, bytes=0, limit_bytes=max_bytes,
@@ -76,14 +81,20 @@ def run(archive, output, cfg, variants=3, max_bytes=5_000_000_000, notify=None, 
                     del raw
                 except (ValueError, KeyError, OSError) as exc:
                     state['clips_failed'] += 1
-                    manifest.write(json.dumps(dict(source=info.name, error=str(exc)), ensure_ascii=False)+'\n')
+                    with (output/'failures.jsonl').open('a',encoding='utf-8') as errors:
+                        errors.write(json.dumps(dict(source=info.name, error=str(exc)), ensure_ascii=False)+'\n')
                     manifest.flush(); report(); continue
                 # Finish all variants for this clip before observing the size limit.
                 for variant in range(variants):
                     if (info.name, variant+1) in saved: continue
                     clip_cfg = replace(cfg, seed=cfg.seed+clip_index,
                                        pose_seed=(cfg.pose_seed if cfg.pose_seed is not None else cfg.seed)+clip_index*variants+variant)
-                    result = simulate(points, times, clip_cfg)
+                    try: result = simulate(points, times, clip_cfg)
+                    except (ValueError,KeyError) as exc:
+                        state['clips_failed']+=1
+                        with (output/'failures.jsonl').open('a',encoding='utf-8') as errors:
+                            errors.write(json.dumps(dict(source=info.name,variant=variant+1,error=str(exc)))+'\n')
+                        continue
                     name = f'clip_{clip_index:05d}_pose_{variant+1:02d}.npz'
                     target = output/name
                     temporary = output/(name+'.part')

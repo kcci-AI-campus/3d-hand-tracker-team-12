@@ -1,0 +1,168 @@
+{
+  "sha": "f27f19f55f8270b3108ea0b53ce5aa81c543ff7c",
+  "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/f27f19f55f8270b3108ea0b53ce5aa81c543ff7c",
+  "tree": [
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "537001647c913d25587d392f52f5e90d84030357",
+      "size": 73,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/537001647c913d25587d392f52f5e90d84030357"
+    },
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d7a6e1016856d0be96fd43a2d6fab150640eaf01",
+      "size": 558,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/d7a6e1016856d0be96fd43a2d6fab150640eaf01"
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6071215bd4c3a70a0a8174d06ef0fa27e957e589",
+      "size": 4875,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/6071215bd4c3a70a0a8174d06ef0fa27e957e589"
+    },
+    {
+      "path": "assets",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "3fafb39ff1e89370cad44f8f4d7d27c028e35d49",
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/3fafb39ff1e89370cad44f8f4d7d27c028e35d49"
+    },
+    {
+      "path": "assets/renders",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "afde3754bedd43486c1520714fbeb52d4774535a",
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/afde3754bedd43486c1520714fbeb52d4774535a"
+    },
+    {
+      "path": "assets/renders/cover.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "75bbeab0fb2cf089d168f10288442c06473ac666",
+      "size": 6381101,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/75bbeab0fb2cf089d168f10288442c06473ac666"
+    },
+    {
+      "path": "assets/renders/poses_overview.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "12e94db2591f79003392f60c9ca80ab0d6e2f98c",
+      "size": 373586,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/12e94db2591f79003392f60c9ca80ab0d6e2f98c"
+    },
+    {
+      "path": "assets/renders/rigs.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f833d73e3ca06c761353da21d8735c48aee35f09",
+      "size": 3818468,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/f833d73e3ca06c761353da21d8735c48aee35f09"
+    },
+    {
+      "path": "assets/renders/turntable.gif",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b0852f2c14b93470c30e40365683e87f3dd0e9e0",
+      "size": 2735385,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/b0852f2c14b93470c30e40365683e87f3dd0e9e0"
+    },
+    {
+      "path": "assets/rig",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "1e377198316341fc39a8ab1d64e8b30138d04f4c",
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/1e377198316341fc39a8ab1d64e8b30138d04f4c"
+    },
+    {
+      "path": "assets/rig/rig_neutral.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d389cb4c4bbe55fd3ee9851ea345a9e260c77767",
+      "size": 145545,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/d389cb4c4bbe55fd3ee9851ea345a9e260c77767"
+    },
+    {
+      "path": "assets/rig/rig_ok_gesture.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c6559e9fc91ca7ea7bfd1d321d4e4a8f8dfc6c3c",
+      "size": 163803,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/c6559e9fc91ca7ea7bfd1d321d4e4a8f8dfc6c3c"
+    },
+    {
+      "path": "assets/uv",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "d2e4e32e3f55a70233d54787124c974c9f0a9665",
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/d2e4e32e3f55a70233d54787124c974c9f0a9665"
+    },
+    {
+      "path": "assets/uv/uv_layout.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "79aafafd8b49265025c1a095abc1d0ac71dd84c9",
+      "size": 771482,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/79aafafd8b49265025c1a095abc1d0ac71dd84c9"
+    },
+    {
+      "path": "assets/wireframe",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "515686044f837342f870e7b0f0c371d5e81b5c58",
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/515686044f837342f870e7b0f0c371d5e81b5c58"
+    },
+    {
+      "path": "assets/wireframe/wireframe_overlay.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "15d3cda121e7de8cf8123f2c3625556918b2e083",
+      "size": 219732,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/15d3cda121e7de8cf8123f2c3625556918b2e083"
+    },
+    {
+      "path": "assets/wireframe/wireframe_seams.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3125d6758c05cbb3b77c6e0c4c8232bc7c470e29",
+      "size": 364312,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/3125d6758c05cbb3b77c6e0c4c8232bc7c470e29"
+    },
+    {
+      "path": "blender",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "b48618546420742b700b474d3c04402709799123",
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/b48618546420742b700b474d3c04402709799123"
+    },
+    {
+      "path": "blender/hand_model.blend",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c574b226967dcfa6002fff1640ff5e1ee8dab806",
+      "size": 2329219,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/c574b226967dcfa6002fff1640ff5e1ee8dab806"
+    },
+    {
+      "path": "exports",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "df16fe40572375dc63ac7fd8d1b8c56524d73908",
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/trees/df16fe40572375dc63ac7fd8d1b8c56524d73908"
+    },
+    {
+      "path": "exports/hand_model.glb",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "df5beb34d11ab13d794101ff8ffa35786daab425",
+      "size": 12291880,
+      "url": "https://api.github.com/repos/emmalieker/anatomical-hand-model/git/blobs/df5beb34d11ab13d794101ff8ffa35786daab425"
+    }
+  ],
+  "truncated": false
+}

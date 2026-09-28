@@ -1,14 +1,76 @@
+## Inter-hand overlap dropout
+
+Enabled by default: `overlap_dropout_max=0.8` (GUI: 손 겹침 누락 강도; 0 disables), `overlap_dropout_start=0.15`. At each camera capture, project both true hands, clip their 2D bounding boxes to the image, and divide intersection area by each hand's own box area. Coverage above 15% ramps linearly to the configured probability. The hand with greater mean positive keypoint depth uses full strength; the foreground hand uses one quarter. Equal depth uses their average strength. Thus full coverage contributes 80% rear / 20% front independent whole-hand dropout by default, in addition to existing distance and burst dropout. No individual joints are randomly dropped. Invalid, degenerate, or offscreen-only boxes do not cause overlap dropout.
+
+This is a bounding-box heuristic, not measured detector performance or mesh-level occlusion. It runs independently per camera and captured frame, and reused observations retain the same result. Targets are unchanged. Background false positives can still appear after a real hand is dropped. Inference timing remains based on the existing geometric hand-count proxy. Diagnostic NPZ arrays `[T,3,2]`: `hand_overlap_coverage`, `overlap_dropout_probability`, `overlap_dropout_mask` (not model input features).
+
+## Background false hand detections
+
+`false_positive_prob=0.01` starts a false detection per camera capture while no burst is active; it lasts 1–3 capture frames by default. Set it to 0 to disable (also exposed in GUI). This is an assumed augmentation rate, not a measured detector error rate. A coherent, rotated 21-point hand shape is placed away from projected true keypoints and drifts slightly during the burst. This is a screen-space background proxy: source images/background geometry are unavailable. An undetected hand slot is preferred; otherwise one detection is replaced because the input has two slots. Whole-hand dropout and out-of-frame true hands can therefore still produce a false detection.
+
+`false_positive_mask[T,3,2]` records corruption for diagnostics only; it is not a model input. Corresponding rays and input masks are valid-looking detections. Ground truth and target masks stay unchanged. Reused captures reuse the same corruption. `in_frame_mask` still describes true geometry, so false positives may be valid inputs even where that mask is false. Quality JSON counts false-positive hand observations (including reused observations). False positives currently do not change simulated inference cost. New datasets use these settings; existing NPZ files are unchanged.
+
+## Output query synchronization
+
+Default `query_sync_camera3=true`: the transformer runs on Pi 3. Each local camera 3 keypoint extraction completion triggers a query (`capture + inference time`), with no transport delay, network packet loss, or relative clock error on camera 3. Cameras 1/2 retain their network delays, packet loss, and clock errors relative to Pi 3. In timing-profile replay without hand-count timing, local readiness uses the measured pre-send duration as an approximation. Ground truth is interpolated at query time; queries beyond the source end are excluded. Inputs include only observations available by the query. `arrival_time` for camera 3 denotes local availability. Transformer execution time and contention with local keypoint extraction are not modeled yet. `output_fps` applies only in legacy `query_sync_camera3=false` mode. GUI playback and missing-duration statistics use actual timestamps.
+
+## 거리별 손 드롭아웃
+
+기본 ON인 `Distance-weighted Dropout`은 실제 카메라에서 촬영 시점 손목까지 거리에 따라 독립 손 드롭과 연속 누락 **시작** 확률에 같은 배율을 곱합니다. 거리 기준의 강제 제외는 없습니다. 1월드=40cm 변환을 사용하고 카메라별/손별/촬영별로 계산합니다.
+
+기본 독립 드롭 확률은 0cm 1%, 25cm 1.5%, 50cm 2%, 75cm 5%, 100cm 10%, 150cm 이상 20%입니다. 구간 사이를 선형 보간하며 이 값들은 증강 가정입니다. JSON의 `dropout_distance_cm=[0,50,75,100,150]`, `dropout_distance_factors=[0.2,0.4,1,2,4]`로 곡선을 바꿀 수 있습니다. 최종 확률은 0~1로 제한합니다. GUI 기준 손 드롭 확률을 바꾸면 곡선 전체가 비례해 바뀝니다.
+
+기준 연속 누락 시작률 1%도 50cm에서는 0.4%, 150cm에서는 4%가 됩니다. 이미 시작된 연속 누락은 정해진 2~5프레임을 유지합니다. 표의 독립 드롭 확률은 전체 누락률이 아니며 연속 누락과 화면 밖 판정은 별도입니다. 키포인트 개별 누락은 여전히 없습니다.
+
+NPZ의 `hand_dropout_probability`, `hand_burst_start_probability`, `hand_distance_cm`는 선택된 촬영 관측의 실제 적용 값이며 모양은 [T,3,2]입니다. 아직 선택된 관측이 없으면 NaN입니다. 기존 NPZ는 소급 변경하지 않습니다.
+
+## 약한 키포인트 지터
+
+관절별 무작위 누락은 제거했습니다. `missing_prob`는 이전 JSON을 읽기 위한 호환 필드일 뿐 실제로 적용하지 않습니다. 손 전체 5% 드롭, 연속 누락, 화면 밖 판정은 유지합니다.
+
+새 기본값은 u/v 각 축의 독립 Gaussian 지터 표준편차 **0.1px**와 시간 상관 지터 표준편차 **0.1px**입니다. 합산 표준편차는 약 0.14px이며 320×240 영상 기준입니다. 관측된 모든 관절에 적용하고, 큰 이상치 확률은 기본 0입니다. 예전 설정을 불러오면 지터 강도는 그 설정을 따르므로 최신 `samples/gigahands_40cm.json`을 사용하세요.
+
+# 생성기 업데이트: schema 2
+
+- 입력 촬영/도착 시간은 각 프레임 자신의 query 기준(초)입니다. `training_window()`도 변환하지 않으며, attention용 프레임 간 시간은 `window_frame_offsets()`에서 받습니다.
+- 크기를 자동 축소하지 않습니다. 기본 `workspace_policy=valid_windows`는 좌표가 (-1,1)을 벗어난 프레임을 포함하는 윈도우만 제외합니다. NPZ에는 전체 클립이 남지만 **학습은 window_starts에 기록된 시작점만 사용**해야 합니다. 유효 윈도우가 전혀 없으면 실패 로그에 남깁니다. strict는 이전의 클립 전체 오류 동작입니다.
+- `gigahands_balanced.py`는 참가자별 약 80/10/10 train/val/test를 제공합니다(최소 3명). test는 학습·튜닝에 사용하지 마세요. 최종 평가는 `python -m training.evaluate --split test`에 데이터·체크포인트·출력 옵션을 함께 지정합니다. 기존 데이터의 분할은 변경하지 않습니다.
+- 정상 항목은 manifest.jsonl, 실패는 failures.jsonl에 저장합니다. quality_report.json/md에 분할별 관측 카메라 수, 관측 나이, 누락 길이, 처리 FPS/추론 시간 분포, 제외 윈도우 수를 기록합니다. 관측 통계는 제외 윈도우를 포함한 전체 query 프레임 기준입니다.
+- 균형 생성기 `--resume`은 기존 폴더에서 이어갑니다. 원본 SHA256, 코드, 설정, 타이밍 프로필이 같아야 하고 저장된 NPZ 해시를 검사합니다. 원본은 다시 읽지만 완료한 클립은 재생성하지 않습니다. 용량 제한은 변경할 수 있습니다. receipts는 중단 복구용 완료 기록이므로 보존하세요. 예전 버전 데이터에 이어쓰기는 허용하지 않습니다.
+
+```powershell
+.\.venv-transformer\Scripts\python.exe gigahands_balanced.py --input "C:\Users\kccistc\Downloads\keypoints_3d_mano_align.tar.gz" --output exports/gigahands_v2_40cm --config samples/gigahands_40cm.json --all-clips --gui
+# 중단 후 같은 명령에 --resume 추가
+```
+
+추가 증강 기본값(실측 분포가 아닌 가정):
+
+| 항목 | 기본값 |
+|---|---|
+| 독립 손 드롭 | 5%/촬영/손/카메라 |
+| 연속 누락 시작 | 1%, 2~5 촬영 프레임 지속(독립 드롭과 별도) |
+| 상관 좌표 오차 | AR(1), 정상상태 표준편차 0.1px, 유지율 0.85 |
+| 추론 시간 변동 | 표준편차 1ms, 최소 0.1ms |
+| 드문 추가 추론 지연 | 0.5% 확률, 10~40ms |
+| 접촉 시 손 크기/길이 증강 | 기본 변동 폭의 1/4 |
+
+양손 관절이 2cm 이내로 접근하면 클립 전체의 크기 증강을 완화합니다. 객체 접촉은 골격만으로 알 수 없어 GUI **Contact-sensitive Clip** 또는 `contact_sensitive=true`로 지정합니다. `contact_augmentation_factor=0`이면 접촉 민감 클립의 손 크기를 그대로 유지합니다. 이 휴리스틱은 실제 접촉/충돌 제약을 보장하지 않습니다.
+
+GUI **추가 증강** 탭에서 주요 변수를 바꿀 수 있습니다. 전체 생성의 `--config`는 파일의 설정을 우선 사용하며, 개별 증강 CLI 옵션을 함께 주어도 config가 우선합니다. 품질 보고서에는 학습 입력의 진단만 기록되며 실제 카메라 값이 모델 입력에 추가되지 않습니다.
+
+---
+
 # GigaHands 다중 카메라 학습 데이터 생성기
 
 ## Roll 없는 카메라 설치 오차
 
-카메라 화면의 roll은 월드 Y-up 기준 **0°로 고정**합니다. 위치는 X/Y/Z 각 축 표준편차 3cm, 방향은 yaw(월드 Y축 회전)·pitch(고도각) 각각 표준편차 5°로 뽑습니다. 회전벡터 Z값만 0으로 놓는 대신, 방향을 뽑고 수평인 카메라 좌표계를 구성하므로 합성 회전에서도 roll이 생기지 않습니다. 위치·방향 오차는 클립 동안 고정이며 상한은 없습니다.
+카메라 화면의 roll은 월드 Y-up 기준 **0°로 고정**합니다. 위치는 X/Y/Z 각 축 표준편차 2cm, 방향은 yaw(월드 Y축 회전)·pitch(고도각) 각각 표준편차 3°로 뽑습니다. 회전벡터 Z값만 0으로 놓는 대신, 방향을 뽑고 수평인 카메라 좌표계를 구성하므로 합성 회전에서도 roll이 생기지 않습니다. 위치·방향 오차는 클립 동안 고정이며 상한은 없습니다.
 
 NPZ에는 `sampled_yaw_pitch_errors_deg`(카메라별 yaw/pitch 추출값), `actual_roll_deg`(실제 카메라 roll), metadata의 `camera_roll_enabled=false`를 추가했습니다. 기존 데이터셋은 자동으로 변경되지 않습니다.
 
 전체 원본 클립을 용량 제한 없이 생성하려면:
 
-`python gigahands_balanced.py --input "C:\Users\kccistc\Downloads\keypoints_3d_mano_align.tar.gz" --output exports/gigahands_balanced_no_roll_full --all-clips --gui`
+`python gigahands_balanced.py --input "C:\Users\kccistc\Downloads\keypoints_3d_mano_align.tar.gz" --output exports/gigahands_pi3_overlap --config samples/gigahands_40cm.json --all-clips --gui`
 
 ## 일괄 생성 / Batch
 
@@ -32,7 +94,7 @@ NPZ에는 `sampled_yaw_pitch_errors_deg`(카메라별 yaw/pitch 추출값), `act
 
 3D 씬의 회색 점선 카메라는 명목 보정값, 분홍 실선 카메라는 오차 적용 후 실제 위치·회전·내부 파라미터입니다. 시야 사각뿔, 광축, 위쪽 표식으로 yaw·pitch 방향 차이를 표시하며 오차를 시각적으로 과장하지 않습니다. 상단에는 카메라마다 실제 이동 거리(cm)와 상대 회전각(°)을 표시합니다. 손은 ground truth이며 손목 ray는 명목 보정값으로 계산한 모델 입력입니다. 약한 오차는 두 카메라 표시가 겹쳐 보일 수 있습니다.
 
-GUI는 카메라 배치(cm), 설치 오차 범위, 학습 데이터, 프레임 지연을 표시합니다. 위치 표준편차는 기본 3cm/축, 각도 표준편차는 5°/yaw·pitch이며 상한 없이 정규분포로 추출합니다. GUI 최소·최대는 각각 3/3cm, 5/5°로 시작하므로 표준편차는 고정이고 실제 오차만 무작위입니다. 설정 변경 후 **Apply**을 누르세요. 같은 난수 번호와 설정은 같은 오차를 재현하며, 위치·각도 오차는 클립 동안 고정됩니다. 시계·렌즈·누락 등 세부값은 설정 JSON에 보관하며, 프레임 지연은 별도 탭에서 설정합니다.
+GUI는 카메라 배치(cm), 설치 오차 범위, 학습 데이터, 프레임 지연을 표시합니다. 위치 표준편차는 기본 2cm/축, 각도 표준편차는 3°/yaw·pitch이며 상한 없이 정규분포로 추출합니다. GUI 최소·최대는 각각 2/2cm, 3/3°로 시작하므로 표준편차는 고정이고 실제 오차만 무작위입니다. 설정 변경 후 **Apply**을 누르세요. 같은 난수 번호와 설정은 같은 오차를 재현하며, 위치·각도 오차는 클립 동안 고정됩니다. 시계·렌즈·누락 등 세부값은 설정 JSON에 보관하며, 프레임 지연은 별도 탭에서 설정합니다.
 
 ## 프레임 지연 확인
 
@@ -92,7 +154,7 @@ python gigahands_sim.py --input keypoints_3d_mano_align.tar.gz --member p001-fol
 
 원본 손/관절 순서를 기본적으로 보존합니다. `swap_hands`와 `joint_order`(출력 관절 인덱스에 대응하는 원본 인덱스 21개)로 변경합니다. 뷰어 뼈대는 손목 0, 엄지 1–4, 검지 5–8, 중지 9–12, 약지 13–16, 소지 17–20 순서이므로 원본 joint convention을 확인해 설정하세요. hand 0/1을 확인 없이 left/right로 가정하지 않습니다.
 
-`world_unit_cm=30`이므로 **1월드=30cm**이며 (-1,1) 공간은 각 축 -30~30cm, 전체 60×60×60cm입니다. 카메라 위치는 (-30,-30,15), (30,-30,15), (0,30,30)cm이며 원점까지 거리는 각각 45, 45, 약 42.4cm입니다. 저장된 XYZ와 ray 원점에 30을 곱하면 cm가 됩니다. 단위 길이는 `metadata.units`에 저장하며 ray 방향은 무차원 단위벡터입니다.
+`world_unit_cm=40`이므로 **1월드=40cm**이며 공간은 각 축 -40~40cm입니다. 카메라는 (-40,-40,20), (40,-40,20), (0,40,40)cm입니다. XYZ와 ray 원점에 40을 곱하면 cm이며, 방향은 무차원입니다. 기존 NPZ의 단위는 해당 파일 metadata를 따릅니다.
 
 `axis_order`, `axis_sign`으로 축 변환 후 시퀀스 전체에 **하나의** 중심 이동/스케일을 적용합니다. 프레임별 중심 이동으로 손 움직임을 제거하지 않습니다. 기본 `center=true`, `fit_extent=0.65`는 모든 점을 원점 중심 ±0.65월드(±19.5cm)에 맞춥니다. 자동 맞춤은 원본 손 크기를 바꿉니다. 물리적 크기를 유지하려면 `fit_extent=0`으로 하고 원본 mm는 `scale=1/300`(JSON에는 0.0033333333333333335), cm는 1/30, m는 1/0.3을 사용하세요. 원본 단위는 자동 추정하지 않습니다. 최종 좌표가 (-1,1)을 벗어나면 실패하며 자르지 않습니다. 변환은 metadata에 저장합니다.
 
@@ -100,7 +162,7 @@ python gigahands_sim.py --input keypoints_3d_mano_align.tar.gz --member p001-fol
 
 ### 기본값: 실측 시간 재생 + 약한 랜덤 오차
 
-새로 실행하면 실측 시간 프로파일과 낮은 검출 오차, 확대된 설치 오차 범위를 기본 적용합니다. 설정 파일은 `profiles/measured_mild.json`이며 **Load Config**로 열 수 있습니다. 기존에 저장한 설정 파일을 불러오면 그 파일의 값이 유지됩니다.
+새로 실행하면 실측 시간 프로파일과 낮은 검출 오차, 확대된 설치 오차 범위를 기본 적용합니다. 설정 파일은 `samples/gigahands_40cm.json`이며 (`profiles/measured_mild.json`도 같은 40cm 설정) **Load Config**로 열 수 있습니다. 기존에 저장한 설정 파일을 불러오면 그 파일의 값이 유지됩니다.
 
 `timing_profile=profiles/pi_c270_timing.json`이 기본입니다. 실제 Pi→PC 측정에서 초기 5초를 제외한 5,015개의 촬영 간격·송신 전 처리/대기 시간·전송 구간 시간을 한 행으로 저장했습니다. 한 행의 시간 관계를 유지하며 연속으로 재생하고, 카메라마다 랜덤 시작 행을 선택합니다. 로그 끝에서는 순환합니다. 평균 촬영 간격은 58.54ms(약 17.1FPS), 읽기 완료→수신 추정 지연은 평균 65.80ms/P95 123.83ms, 송신 준비→수신은 평균 1.47ms입니다. 송신 전 처리·대기·인코딩 합계는 평균 64.33ms입니다.
 
@@ -116,8 +178,8 @@ GUI **설치 오차**에서 위치·각도 표준편차의 최소·최대값을 
 
 | 랜덤 변수 | 기본 샘플링 범위 |
 |---|---|
-| 위치 오차 표준편차 | 0.1 월드 단위/축 = 3cm/축 (고정) |
-| 각도 오차 표준편차 | 5°/yaw·pitch (고정) |
+| 위치 오차 표준편차 | 0.05 월드 단위/축 = 2cm/축 (고정) |
+| 각도 오차 표준편차 | 3°/yaw·pitch (고정) |
 | k1 / k2 | -0.01~0.01 / -0.003~0.003 |
 | 픽셀 노이즈 표준편차 | 0.15~0.6px |
 | 이상치 확률 / 크기 표준편차 | 0~0.1% / 1~3px |
@@ -127,9 +189,9 @@ GUI **설치 오차**에서 위치·각도 표준편차의 최소·최대값을 
 | 잔여 시계 offset 표준편차 / drift 표준편차 | 0~0.3ms / 0~2ppm |
 | 추가 롤링셔터 읽기 시간 | 기본 0ms |
 
-설치 오차는 실측 사양이 아닌 증강용 가정입니다. 각 축의 위치 표준편차 3cm, yaw와 pitch 각각의 표준편차 5°로 상한 없는 Gaussian 표본을 뽑습니다. 실제 이동 거리나 상대 회전각은 이 값보다 클 수 있습니다. 카메라마다 독립적으로 한 번 뽑아 클립 동안 고정합니다. 기본 JSON의 `position_limit_cm`, `angle_limit_deg`는 `null`이며 GUI에서는 예전 설정 파일을 불러와도 상한을 제거합니다. CLI는 이전 설정 파일의 숫자 상한을 계속 지원하며 0은 오차를 끕니다. 입력은 과거 관측만 선택하고 정답 자세는 바꾸지 않습니다.
+설치 오차는 실측 사양이 아닌 증강용 가정입니다. 각 축의 위치 표준편차 2cm, yaw와 pitch 각각의 표준편차 3°로 상한 없는 Gaussian 표본을 뽑습니다. 실제 이동 거리나 상대 회전각은 이 값보다 클 수 있습니다. 카메라 1·2의 Y 변위는 공유하고 나머지는 독립적으로 한 번 뽑아 클립 동안 고정합니다. 기본 JSON의 `position_limit_cm`, `angle_limit_deg`는 `null`이며 GUI에서는 예전 설정 파일을 불러와도 상한을 제거합니다. CLI는 이전 설정 파일의 숫자 상한을 계속 지원하며 0은 오차를 끕니다. 입력은 과거 관측만 선택하고 정답 자세는 바꾸지 않습니다.
 
-실제로 적용된 오차는 `actual_position_errors_cm`, `actual_angle_errors_deg` 배열에 저장됩니다. NPZ Reader의 관측 비교 화면에서도 확인할 수 있습니다. 이 두 배열은 진단 전용이며 모델 입력에 포함하지 마세요. 기존 NPZ에 단위 정보가 없으면 리더는 임의로 30cm를 적용하지 않습니다.
+실제로 적용된 오차는 `actual_position_errors_cm`, `actual_angle_errors_deg` 배열에 저장됩니다. NPZ Reader의 관측 비교 화면에서도 확인할 수 있습니다. 이 두 배열은 진단 전용이며 모델 입력에 포함하지 마세요. 기존 NPZ에 단위 정보가 없으면 리더는 임의로 단위를 적용하지 않습니다.
 
 `metadata.config`에는 실제 적용된 값, `metadata.randomization`에는 요청 설정과 샘플링 결과가 저장됩니다. 수동 오차값을 사용하려면 `randomize_errors=false`로 설정하세요. 기존 설정 JSON에 이 키가 없어도 기본 랜덤 모드가 적용됩니다. 기존 NPZ는 자동 변경되지 않으므로 새로 생성해야 합니다.
 
@@ -189,3 +251,38 @@ with np.load('train_clip.npz', allow_pickle=False) as data:
 ```
 
 `training_window`는 시각 feature를 마지막 query 기준으로 다시 정렬합니다. 동일 관측이 여러 query에서 유지되면 반복 토큰이 생깁니다. 원하는 경우 camera ID + capture timestamp로 중복 제거하세요. 이 프로그램은 Transformer 학습용 데이터를 생성하며 모델 학습 자체는 포함하지 않습니다. 학습/검증/시험 분리는 **참가자 또는 원본 시퀀스 단위로 먼저** 수행하고, 같은 원본의 다른 seed/중첩 window가 서로 다른 split에 들어가지 않도록 하세요.
+# 손 크기·손가락 길이 증강
+
+## 손 전체 누락
+
+거리 기준은 사용하지 않습니다. GUI의 **학습 데이터** 탭에서 **화면 밖 관절 기준**(기본 5개)과 **손 전체 드롭 확률**(기본 0.05=5%)을 설정합니다. 21개 관절 중 기준 개수 이상이 화면 밖, 카메라 뒤 또는 결측이면 해당 손 전체를 입력에서 제외합니다. 화면 판정은 검출 노이즈를 더하기 전 실제 투영 좌표로 수행합니다. CLI 옵션은 `--hand-outside-keypoint-threshold 5 --hand-dropout-prob 0.05`입니다.
+
+무작위 드롭은 카메라별·촬영 프레임별·손별로 독립이며 같은 촬영 관측을 여러 query에서 재사용하면 같은 드롭 결과를 유지합니다. 무작위 드롭은 추론 후 출력 누락으로 모델링하므로 추론 시간을 줄이지 않습니다. 화면 밖 기준에 의한 제외는 손 수 기반 추론 시간에도 반영합니다. 3D 정답은 유지합니다.
+
+`hand_detected_mask[T,3,2]`는 화면 기준과 무작위 드롭을 적용한 손 판정, `hand_outside_keypoint_count`는 화면 밖 관절 수, `hand_dropout_mask`는 무작위 드롭 결과입니다. 선택된 관측이 없으면 각각 False/-1/False입니다. 최종 `input_mask`에는 화면 밖/원본 결측과 손 전체 누락만 적용하며 무효 입력은 0입니다. 기존 NPZ는 소급 변경되지 않습니다.
+
+## 손 수에 따른 추론 지연
+
+GUI의 프레임 지연 탭에서 `Hand-dependent Timing`을 켜거나 `samples/hand_count_timing.json`을 Load Config로 불러옵니다. 손 수에 따른 시간 모델이 기본으로 켜져 있습니다. CLI 단일 생성은 `--config samples/hand_count_timing.json`, 전체 생성은 `gigahands_balanced.py --hand-count-timing`을 사용합니다.
+
+사용자 로그에 따른 추론 시간은 손 0/1/2개일 때 각각 27/56/85.5ms입니다. 카메라마다 해당 촬영 시각의 화면 밖 관절 수가 설정 기준 미만인 손을 세어 적용합니다. 이는 실제 검출기의 가림·신뢰도 판단을 대체하는 근사치입니다. 키포인트의 무작위 누락과는 별개입니다.
+
+최신 프레임을 순차 처리한다고 가정하고 다음 프레임 간격을 `max(1000/19, 추론시간)` ms로 계산합니다. 안정 구간의 생성 속도는 손 0/1/2개에서 약 19/17.9/11.7FPS입니다. 로그의 순간 FPS 변동이나 손 개수 전환 시 이동평균까지 재현하지는 않습니다. 추가 버퍼 대기와 노출 지연은 측정되지 않았으며 이 모델에 임의로 더하지 않습니다.
+
+실측 프로필이 지정되면 **전송 시간 열만** 재생하고, 기존 처리 시간·촬영 간격은 재사용하지 않습니다. 수동 모드에서는 설정된 전송 지연을 사용합니다. 도착 시각은 `촬영 시각 + 손 수별 추론 시간 + 전송 시간`입니다. `hand_timing_events`에는 카메라 ID, 촬영/도착 시각(초), 추정 손 수, 추론 시간(ms)을 기록하며 순서는 `metadata.hand_timing.event_columns`에 있습니다. 모델 feature의 시간은 여전히 각 query 기준 초 단위입니다. 기존 NPZ는 바뀌지 않으므로 새 데이터셋은 원본에서 다시 생성해야 합니다.
+
+카메라 설치 오차는 카메라 1·2의 **Y축 변위**를 클립마다 함께 추출합니다. 예를 들어 Y 오차가 +2cm이면 두 카메라 모두 자신의 명목 Y 위치에서 +2cm 이동합니다. X/Z 변위와 Yaw/Pitch는 각각 독립이고 카메라 3도 독립입니다. 기존 NPZ에는 소급 적용되지 않으며 GUI Apply/Randomize 및 새 데이터 생성부터 적용됩니다. 이 규칙은 `metadata.units.shared_position_error_axes`에도 기록됩니다.
+
+GUI의 **손 크기** 탭에서 `Randomize Hand Shape`를 켜고 `Apply`를 누릅니다. 기본 변동 폭은 손 전체 크기 ±10%, 각 손가락 길이 ±5%입니다. 기본 활성화 상태는 켜짐입니다.
+
+손목 이동 경로와 뼈 방향은 유지합니다. 정규화 후 손목에서 각 손가락 기저 관절까지의 뼈에는 전체 크기 배율을 적용하고, 이후 손가락 뼈에는 손가락별 추가 배율도 적용합니다. 양손은 같은 배율을 공유하고 클립 전체에서 고정됩니다. 난수 번호(seed)를 바꾸면 새 모양이 생성되며, 카메라 pose_seed만 바꾸면 손 모양은 유지됩니다. 씬·투영 입력·3D 정답 모두 같은 변형을 사용하며 실제 배율은 NPZ `metadata.hand_shape`에 기록됩니다. 작업 공간 밖 프레임을 포함하는 윈도우는 기본적으로 제외합니다.
+
+전체 클립 CLI 생성 시 `--randomize-hand-shape --hand-size-percent 10 --finger-length-percent 5`를 추가합니다. 기존 NPZ/ZIP에는 소급 적용되지 않으며, 증강 데이터를 만들 때 새 출력 폴더를 사용하세요. 관절 뼈를 조절하는 방식이므로 원본의 손끼리/물체와의 접촉까지 유지하는 것은 아닙니다.
+
+## 40cm 월드와 실제 손 크기
+
+기본은 `world_unit_cm=40`, `scale=2.5`, `fit_extent=0`입니다. 원본 미터 좌표를 월드로 변환하고 평행이동만으로 중심을 맞춥니다. 자동 크기 맞춤은 끄며, 변환 뒤 손 크기 ±10%와 손가락 길이 ±5% 증강을 기본 적용합니다. 손 모양 랜덤·오차 랜덤·손 수 기반 지연은 기본 ON, 손별 드롭은 5%입니다. CLI에서 `--no-randomize-hand-shape`, `--no-hand-count-timing`으로 끌 수 있습니다.
+
+원본 단위 근거: 공식 [README](https://github.com/brown-ivl/GigaHands/blob/main/README.md)는 aligned 버전과 정규화 버전을 구분합니다. 다운로드한 `keypoints_3d_mano_align`의 처음 세 클립에서 손목→중지 끝 뼈 길이 합 중앙값은 각각 0.175108, 0.173828, 0.174317입니다. 이를 미터로 해석하면 약 17.5cm로 일관됩니다. **공식 문서의 명시적 단위 확인이 아닌 원본 수치에 근거한 미터 단위 판단**입니다. 다른 단위/정규화 입력은 scale을 조절해야 합니다.
+
+원본 동작이나 증강 결과가 (-1,1)을 벗어나면 크기를 줄이지 않고 해당 프레임을 포함한 윈도우를 제외합니다. 기존 데이터셋/저장 설정은 새 기본값으로 덮어쓰지 않습니다.

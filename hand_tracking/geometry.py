@@ -1,12 +1,7 @@
-"""Differentiable multi-view ray geometry: triangulation, camera corrections and the
-optional constant-velocity fit to individual rays. No learned parameters."""
+"""Differentiable multi-view ray geometry: triangulation (optionally dropping one outlier
+ray) and camera corrections. No learned parameters."""
 import torch
-import torch.nn.functional as F
-from .constants import REPEAT_TOLERANCE_S, MIN_TIME_STD_S, MAX_EXTRAPOLATION_S, MIN_RAY_SIN2, TIME_UNIT_S
-# Robust motion fit (anchor_motion_fit) residual limits, dimensionless distance/depth.
-HUBER_RAY_RESIDUAL = .02
-MAX_MOTION_RESIDUAL = .08
-MAX_MOTION_RMS = .005
+from .constants import MIN_RAY_SIN2, RAY_RESIDUAL_FLOOR, OUTLIER_MARGIN
 
 
 def cross3(a, b):
@@ -27,34 +22,100 @@ def solve3(a, b):
     return (b[...,0:1]*c0+b[...,1:2]*c1+b[...,2:3]*c2)/det
 
 
-def triangulate(origins, directions, mask, max_residual=None):
-    """Least-squares point closest to the masked rays.
-
-    origins/directions [...,C,3], mask [...,C] -> point [...,3], valid [...].
-    Needs two or more non-parallel rays with positive depths, and with max_residual
-    every ray's angular residual within it; otherwise point is 0 and valid is False.
-    """
+def _rays(origins, directions, mask):
+    """Usable rays: mask, unit directions and origins (zero where unusable), projections
+    I - d d^T [...,C,3,3] (zero where unusable) and pairwise sin^2 of ray angles [...,C,C]."""
     mask = (mask.bool() & torch.isfinite(origins).all(-1) & torch.isfinite(directions).all(-1)
             & (directions.norm(dim=-1) > 1e-8))
     d = torch.where(mask[...,None], directions, 0.); o = torch.where(mask[...,None], origins, 0.)
     d = d/d.norm(dim=-1, keepdim=True).clamp_min(1e-8)
     eye = torch.eye(3, dtype=d.dtype, device=d.device)
     projection = (eye - d[...,:,None]*d[...,None,:])*mask[...,None,None]
-    a = projection.sum(-3)
-    rhs = (projection @ o[...,None]).sum(-3)
     # Widest pairwise ray angle instead of eigvalsh: batched CUDA eigh can fail to
     # converge on the empty/single-ray matrices (repeated eigenvalues) present here.
-    sin2 = cross3(d[...,:,None,:], d[...,None,:,:]).square().sum(-1).amax((-2,-1))
+    pair = cross3(d[...,:,None,:], d[...,None,:,:]).square().sum(-1)
+    return mask, d, o, projection, pair
+
+
+def _point(mask, d, o, projection, pair):
+    """Least-squares point of the rays in mask (a subset of _rays' rays) and its validity."""
+    used = projection*mask[...,None,None]
+    return _solve(used.sum(-3), (used @ o[...,None]).sum(-3).squeeze(-1), mask, d, o, pair)
+
+
+def _solve(a, rhs, mask, d, o, pair):
+    """Point from the normal equations a x = rhs of the rays in mask; d, o, pair may
+    broadcast over leading axes of mask (leave-one-out problems share them)."""
+    eye = torch.eye(3, dtype=d.dtype, device=d.device)
+    sin2 = (pair*(mask[...,:,None] & mask[...,None,:])).amax((-2,-1))
     valid = (mask.sum(-1) >= 2) & (sin2 > MIN_RAY_SIN2)
-    point = solve3(torch.where(valid[...,None,None], a, eye), rhs.squeeze(-1))
+    point = solve3(torch.where(valid[...,None,None], a, eye), rhs)
     # A point behind any contributing camera means inconsistent rays (outliers), not a hand.
     depth = ((point[...,None,:]-o)*d).sum(-1)
     valid = valid & ((depth > 0) | ~mask).all(-1)
-    if max_residual is not None:
-        miss = point[...,None,:]-o-depth[...,None]*d
-        residual = miss.norm(dim=-1)/depth.clamp_min(1e-6)
-        valid = valid & ((residual <= max_residual) | ~mask).all(-1)
     return torch.where(valid[...,None], point, 0.), valid
+
+
+def triangulate(origins, directions, mask):
+    """Least-squares point closest to the masked rays.
+
+    origins/directions [...,C,3], mask [...,C] -> point [...,3], valid [...].
+    Needs two or more non-parallel rays with positive depths; otherwise point is 0 and
+    valid is False.
+    """
+    return _point(*_rays(origins, directions, mask))
+
+
+def ray_residuals(point, origins, directions):
+    """Angular residual (miss distance / depth) of each ray [...,C] to point [...,3]."""
+    d = directions/directions.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+    relative = point[...,None,:]-origins
+    depth = (relative*d).sum(-1)
+    return (relative-depth[...,None]*d).norm(dim=-1)/depth.clamp_min(1e-6)
+
+
+def robust_triangulate(origins, directions, mask, outlier_ratio):
+    """triangulate, rejecting at most one outlier ray among three or more.
+
+    For each ray k: e = its residual to the point of the other rays, s = their largest
+    residual to that point. The ray with the largest e/max(s, RAY_RESIDUAL_FLOOR) is
+    dropped when that ratio exceeds outlier_ratio and OUTLIER_MARGIN times the next ray's:
+    the other rays agree and it does not. When the next ray's ratio is within that margin
+    the sample is ambiguous and invalid: a ray displaced within the epipolar plane of
+    another camera agrees with that camera, so pairs (0,1) and (0,2) can both agree while
+    (1,2) do not, and geometry cannot tell whether 1 or 2 is wrong. A camera whose
+    calibration is off looks like an outlier, so apply this to corrected rays.
+    The leave-one-out points share the rays' preparation and are solved in one batch.
+    Returns point, valid and the rays used [...,C].
+    """
+    mask, d, o, projection, pair = _rays(origins, directions, mask)
+    # Normal equations of all rays, and of all but ray k by removing that ray's term
+    # (projection is zero for unusable rays, so their "removal" changes nothing).
+    term = (projection @ o[...,None]).squeeze(-1)                                        # [...,C,3]
+    a, rhs = projection.sum(-3), term.sum(-2)
+    point, valid = _solve(a, rhs, mask, d, o, pair)
+    count = mask.shape[-1]
+    others = ~torch.eye(count, dtype=torch.bool, device=mask.device)                    # [K,C]: all but k
+    keep = mask[...,None,:] & others                                                    # [...,K,C]
+    loo_point, loo_valid = _solve(a[...,None,:,:]-projection, rhs[...,None,:]-term, keep, d[...,None,:,:],
+                                  o[...,None,:,:], pair[...,None,:,:])
+    relative = loo_point[...,None,:]-o[...,None,:,:]                                    # [...,K,C,3]
+    along = (relative*d[...,None,:,:]).sum(-1)
+    residual = (relative-along[...,None]*d[...,None,:,:]).norm(dim=-1)/along.clamp_min(1e-6)   # [...,K,C]
+    spread = torch.where(keep, residual, 0.).amax(-1)
+    own = residual.diagonal(dim1=-2, dim2=-1)                                           # [...,K]
+    ratio = torch.where(loo_valid & mask & (mask.sum(-1, keepdim=True) >= 3), own/spread.clamp_min(RAY_RESIDUAL_FLOOR), 0.)
+    top = ratio.topk(min(2, count), dim=-1)
+    best, dropped = top.values[...,0], top.indices[...,0]
+    second = top.values[...,1] if count > 1 else torch.zeros_like(best)
+    pick = lambda value: value.gather(-1, dropped[...,None]).squeeze(-1)
+    best_point = loo_point.gather(-2, dropped[...,None,None].expand(*dropped.shape, 1, 3)).squeeze(-2)
+    suspect = best > outlier_ratio
+    ambiguous = suspect & (best < OUTLIER_MARGIN*second)
+    reject = suspect & ~ambiguous
+    valid = torch.where(reject, pick(loo_valid), valid) & ~ambiguous
+    point = torch.where(valid[...,None], torch.where(reject[...,None], best_point, point), 0.)
+    return point, valid, mask & ~(reject[...,None] & (torch.arange(count, device=mask.device) == dropped[...,None]))
 
 
 def _sinc(theta, theta2, small):
@@ -92,127 +153,3 @@ def apply_calibration(params, origins, directions):
     return origins, directions
 
 
-def _calibration_residuals(params, origins, directions, mask, noise, rotation_std, position_std):
-    """Whitened ray-to-point angular residuals plus prior residuals for one window."""
-    o, d = apply_calibration(params[None], origins[None], directions[None])
-    o, d = o[0].permute(0,2,3,1,4), d[0].permute(0,2,3,1,4)          # [T,2,21,C,3]
-    m = mask.permute(0,2,3,1)
-    point, ok = triangulate(o, d, m)
-    relative = point[...,None,:]-o
-    depth = (relative*d).sum(-1, keepdim=True)
-    residual = (relative-d*depth)/depth.clamp_min(1e-3)
-    residual = torch.where((m & ok[...,None])[...,None], residual, 0.)/noise
-    prior = torch.cat(((params[:,:3]/rotation_std).flatten(), (params[:,3:]/position_std).flatten()))
-    return torch.cat((residual.flatten(), prior))
-
-
-def calibrate_cameras(origins, directions, mask, steps, rotation_std, position_std, noise, initial=None):
-    """MAP per-camera extrinsic correction from multi-view ray consistency, per window.
-
-    origins/directions [B,T,3,2,21,3], mask [B,T,3,2,21]. Only relative camera errors are
-    observable; the Gaussian prior keeps the common (unobservable) rig motion at the
-    nominal calibration. Returns params [B,3,6]. Model-free baseline.
-    """
-    b = origins.shape[0]
-    params = origins.new_zeros(b,3,6) if initial is None else initial.to(origins.dtype)
-    if steps <= 0: return params
-    def residuals(p, o, d, m):
-        return _calibration_residuals(p, o, d, m, noise, rotation_std, position_std)
-    evaluate = torch.func.vmap(residuals)
-    jacobian = torch.func.vmap(torch.func.jacfwd(residuals))
-    for _ in range(steps):
-        r = evaluate(params, origins, directions, mask)
-        j = jacobian(params, origins, directions, mask).reshape(b, r.shape[1], 18)
-        # The prior rows make J^T J positive definite, so plain Gauss-Newton is stable.
-        # Data rows (1/noise^2) outweigh the prior by ~1e6: accumulate and solve in float64.
-        j, r = j.double(), r.double(); jt = j.transpose(1,2)
-        step = torch.linalg.solve(jt@j, jt@r[...,None]).squeeze(-1)
-        params = params-step.reshape(b,3,6).to(params.dtype)
-    return params
-
-
-def motion_triangulate(origins, directions, valid, capture, query, span, lookback_s):
-    """Fit p + v * capture_time directly to individual rays, per query (anchor_motion_fit).
-
-    origins/directions [B,S,C,H,J,3], valid/capture [B,S,C,H,J] (capture on the query's
-    time origin), query [B,Q], span [B,Q,S] rays each query may use. Repeated captures
-    share one unit of weight; Huber IRLS then rejection/refit handles outliers.
-    Underconstrained or inconsistent fits return valid=False. Returns position [B,Q,H,J,3],
-    validity and the latest accepted ray's age [B,Q,H,J].
-    """
-    order = (0,1,3,4,2,5)
-    o, d = origins.permute(order), directions.permute(order)  # B,S,H,J,C,3
-    m = valid.permute(0,1,3,4,2)
-    stamp = capture.permute(0,1,3,4,2)
-    finite = torch.isfinite(o).all(-1) & torch.isfinite(d).all(-1) & torch.isfinite(stamp)
-    m = m & finite & (d.norm(dim=-1) > 1e-8)
-    o, d = torch.where(m[...,None], o, 0.), torch.where(m[...,None], d, 0.)
-    d = F.normalize(d, dim=-1)
-    stamp = torch.where(m, stamp, 0.)
-    age = query[:,:,None,None,None,None]-stamp[:,None]
-    use = m[:,None] & span[:,:,:,None,None,None] & (age >= -REPEAT_TOLERANCE_S) & (age <= lookback_s)
-    same = ((stamp[:,:,None]-stamp[:,None]).abs() <= REPEAT_TOLERANCE_S) & m[:,:,None] & m[:,None]
-    count = torch.einsum('bsuhjc,btuhjc->btshjc', same.float(), use.float())
-    base_weight = use.float()/count.clamp_min(1)
-    eye3 = torch.eye(3, device=o.device, dtype=o.dtype)
-    projection = eye3-d[..., :,None]*d[...,None,:]
-    rhs = (projection @ o[...,None]).squeeze(-1)
-    # Centre and scale time for the 6x6 system; v below is displacement per TIME_UNIT_S.
-    total = base_weight.sum((2,5))
-    mean_age = (base_weight*age).sum((2,5))/total.clamp_min(1)
-    tau = (mean_age[:,:,None,:,:,None]-age)/TIME_UNIT_S
-    eye6 = torch.eye(6, device=o.device, dtype=o.dtype)
-
-    def fit(weight):
-        a00 = torch.einsum('btshjc,bshjcxy->bthjxy', weight, projection)
-        a01 = torch.einsum('btshjc,bshjcxy->bthjxy', weight*tau, projection)
-        a11 = torch.einsum('btshjc,bshjcxy->bthjxy', weight*tau.square(), projection)
-        matrix = torch.cat((torch.cat((a00,a01), -1), torch.cat((a01,a11), -1)), -2)
-        b0 = torch.einsum('btshjc,bshjcx->bthjx', weight, rhs)
-        b1 = torch.einsum('btshjc,bshjcx->bthjx', weight*tau, rhs)
-        # Cholesky checks rank without differentiating eigenvectors at repeated
-        # eigenvalues. Reject poor pivots before the differentiable solve.
-        with torch.no_grad():
-            factor, info = torch.linalg.cholesky_ex(matrix.detach())
-            pivots = factor.diagonal(dim1=-2, dim2=-1).square()
-            cameras = (weight.sum(2) > 0).sum(-1)
-            evidence = torch.where(weight > 0, base_weight, 0.).sum((2,5))
-            temporal_weight = weight.sum((2,5)).clamp_min(1e-8)
-            centre = (weight*tau).sum((2,5))/temporal_weight
-            variance = (weight*(tau-centre[:,:,None,:,:,None]).square()).sum((2,5))/temporal_weight
-            good = ((info == 0) & (evidence >= 4-1e-5) & (cameras >= 2)
-                    & (variance*TIME_UNIT_S**2 > MIN_TIME_STD_S**2)
-                    & (pivots.amin(-1) > 1e-4*pivots.amax(-1).clamp_min(1e-8)))
-        solution = torch.linalg.solve(torch.where(good[...,None,None], matrix, eye6),
-                                      torch.cat((b0,b1), -1)[...,None]).squeeze(-1)
-        return solution, good
-
-    def residual(solution):
-        position = solution[:,:,None,:,:,None,:3] + tau[...,None]*solution[:,:,None,:,:,None,3:]
-        relative = position-o[:,None]
-        depth = (relative*d[:,None]).sum(-1)
-        angular = (relative-depth[...,None]*d[:,None]).norm(dim=-1)/depth.clamp_min(1e-6)
-        return angular, depth
-
-    weight = base_weight
-    for _ in range(3):
-        solution, good = fit(weight)
-        with torch.no_grad():
-            angular, depth = residual(solution)
-            robust = (HUBER_RAY_RESIDUAL/angular.clamp_min(1e-6)).clamp(max=1)
-            weight = base_weight*robust*(depth > 0)
-    with torch.no_grad():
-        accepted = (angular <= MAX_MOTION_RESIDUAL) & (depth > 0)
-        weight = base_weight*accepted
-    solution, good = fit(weight)
-    with torch.no_grad():
-        angular, depth = residual(solution)
-        consistent = ((angular <= MAX_MOTION_RESIDUAL) & (depth > 0)) | (weight == 0)
-        rms = ((weight*angular.square()).sum((2,5))/weight.sum((2,5)).clamp_min(1)).sqrt()
-        # Installation errors or non-linear motion must not be explained as a large
-        # spurious velocity. Use the motion model only when its inliers agree well.
-        good = good & consistent.all(2).all(-1) & (rms <= MAX_MOTION_RMS) & torch.isfinite(solution).all(-1)
-    horizon = mean_age.clamp(min=0, max=MAX_EXTRAPOLATION_S)/TIME_UNIT_S
-    point = solution[...,:3]+solution[...,3:]*horizon[...,None]
-    latest_age = torch.where(weight > 0, age, float('inf')).amin((2,5)).clamp_min(0)
-    return torch.where(good[...,None], point, 0.), good, torch.where(good, latest_age, 0.)

@@ -5,6 +5,10 @@ NUM_HANDS = 2
 NUM_JOINTS = 21
 # One camera frame gives one token per joint of both hands.
 HAND_JOINTS = NUM_HANDS*NUM_JOINTS
+# Joint order: wrist 0, then four joints per finger (thumb 1-4, ..., little 17-20).
+# A finger group is the wrist and that finger's joints.
+FINGERS = 5
+FINGER_JOINTS = tuple((0,)+tuple(range(1+4*f, 5+4*f)) for f in range(FINGERS))
 
 # Exported per-joint feature channels [...,FEATURE_CHANNELS]. Channels 8-9 (capture and
 # arrival relative to the export query) and 11-13 (ids) are not model inputs: the model
@@ -34,3 +38,26 @@ MAX_EXTRAPOLATION_S = .25
 # Triangulation needs two rays at least this far from parallel: sin^2 of the widest
 # angle between them; 2e-3 is about 2.6 degrees.
 MIN_RAY_SIN2 = 2e-3
+# A single-ray anchor keeps a reference point's depth along the ray, at least this far
+# in front of the camera (world units).
+MIN_RAY_DEPTH = 1e-3
+# Outlier ray test: a ray is rejected when its angular residual to the point of the other
+# rays exceeds the ratio times their own residual, floored at this many radians (about
+# 3 px of detector noise) so a perfectly consistent pair does not make every ray an outlier.
+RAY_RESIDUAL_FLOOR = .01
+# The outlier must stand out: its ratio this many times the next candidate's; otherwise
+# two rays are suspects and the sample is dropped as ambiguous.
+OUTLIER_MARGIN = 3.
+# Additive attention bias of an excluded key; finite so fp16 runtimes stay NaN-free.
+MASK_OFF = -1e4
+# Streams keep events this long beyond the model's context before pruning.
+STREAM_KEEP_MARGIN_S = .5
+
+
+def check_event(camera, features_shape, valid_shape):
+    """Validate one camera frame for a stream; returns the camera index."""
+    if int(camera) != camera or not 0 <= int(camera) < NUM_CAMERAS:
+        raise ValueError(f'camera must be an integer in [0, {NUM_CAMERAS}), got {camera!r}')
+    if tuple(features_shape) != (NUM_HANDS, NUM_JOINTS, FEATURE_CHANNELS) or tuple(valid_shape) != (NUM_HANDS, NUM_JOINTS):
+        raise ValueError(f'Expected features [2,21,14] and valid [2,21], got {tuple(features_shape)} and {tuple(valid_shape)}')
+    return int(camera)

@@ -1,4 +1,4 @@
-"""hand_tracking.stream: EventStream equals forward() event by event."""
+"""hand_tracking.stream with HandLite: a stream equals forward() event by event."""
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -6,8 +6,7 @@ import numpy as np
 from model_helpers import linear_events, push_all, randomize_heads, sim_clip, small, synthetic_events
 import torch
 from hand_tracking.data import make_sample
-from hand_tracking.model import HandTransformer
-from hand_tracking.stream import EventStream
+from hand_tracking.lite import HandLite, LiteStream
 
 
 class StreamEquivalenceTests(unittest.TestCase):
@@ -19,8 +18,8 @@ class StreamEquivalenceTests(unittest.TestCase):
         torch.manual_seed(10)
         with tempfile.TemporaryDirectory() as folder:
             clip = sim_clip(folder)
-        model = randomize_heads(HandTransformer(small(blocks=2)).eval(), std=.05)
-        stream, pushed, checked = EventStream(model), 0, 0
+        model = randomize_heads(HandLite(small(blocks=2)).eval(), std=.05)
+        stream, pushed, checked = LiteStream(model), 0, 0
         order = np.argsort(clip['event_arrival'], kind='stable')
         for window in range(0, len(clip['window_starts']), 4):
             sample = make_sample(clip, window, context_s=model.config.context_s)
@@ -46,12 +45,12 @@ class StreamEquivalenceTests(unittest.TestCase):
 
     def test_equal_arrival_times_match_batch(self):
         torch.manual_seed(12)
-        model = randomize_heads(HandTransformer(small()).eval())
+        model = randomize_heads(HandLite(small()).eval())
         base, velocity = torch.randn(2,21,3)*.1, torch.randn(2,21,3)*.3
         times = np.arange(-.5, 0, 1/17.1)
         inputs = synthetic_events(lambda t: base+velocity*t, [t for t in times for _ in range(3)],
                                   [c for _ in times for c in range(3)])
-        stream, last = EventStream(model), None
+        stream, last = LiteStream(model), None
         for i in range(inputs[0].shape[1]):
             arrival = float(inputs[4][0,i])
             if last is not None and arrival == last:
@@ -64,14 +63,14 @@ class StreamEquivalenceTests(unittest.TestCase):
 
     def test_stale_and_duplicate_captures_match_padded_batch(self):
         torch.manual_seed(21)
-        model = randomize_heads(HandTransformer(small()).eval())
+        model = randomize_heads(HandLite(small()).eval())
         base = torch.randn(2,21,3)*.1
         inputs = list(synthetic_events(lambda t: base+t*.8, [0,0,0,.05,.1,.1,.1,.1], [0,1,2,0,0,1,2,0], delay=0.))
         # Last two camera-0 packets duplicate/reverse its accepted .1 capture.
         inputs[4] = torch.tensor([[.01,.01,.01,.15,.11,.11,.11,.16]])
         order = torch.argsort(inputs[4][0], stable=True)
         inputs = [value[:,order] for value in inputs]
-        stream = EventStream(model)
+        stream = LiteStream(model)
         for i in range(inputs[0].shape[1]):
             push_all(stream, inputs, [i])
             stream.flush()
@@ -85,12 +84,12 @@ class StreamEquivalenceTests(unittest.TestCase):
         torch.testing.assert_close(actual[:,0], expected[None].expand(2,-1,-1,-1), atol=1e-5, rtol=1e-5)
 
     def test_pruned_history_and_large_absolute_clock_without_calibration(self):
-        model = HandTransformer(small(calibration_head=False)).eval()
+        model = HandLite(small(calibration_head=False)).eval()
         randomize_heads(model, std=.05)
         base = torch.randn(2,21,3)*.1
         times = [step*.06 for step in range(50) for _ in range(3)]
         inputs = synthetic_events(lambda t: base+t*.01, times, [0,1,2]*50)
-        stream = EventStream(model)
+        stream = LiteStream(model)
         epoch = 1_700_000_000.
         for i in range(0, len(times), 3):
             for j in range(i, i+3):
@@ -110,11 +109,11 @@ class StreamBufferTests(unittest.TestCase):
         inputs[4] = torch.tensor([[-.3,-.05,-.1,-.1]])
         order = torch.argsort(inputs[4][0])
         inputs = [value[:,order] for value in inputs]
-        self.assertEqual(push_all(EventStream(HandTransformer(small())), inputs), [True,True,True,False])
+        self.assertEqual(push_all(LiteStream(HandLite(small())), inputs), [True,True,True,False])
 
     def test_failed_flush_can_be_retried_without_losing_events(self):
-        model = HandTransformer(small()).eval()
-        stream = EventStream(model)
+        model = HandLite(small()).eval()
+        stream = LiteStream(model)
         inputs = synthetic_events(lambda t: torch.zeros(2,21,3), [0,0,0], [0,1,2])
         for i in range(3):
             stream.push(i, inputs[0][0,i], inputs[1][0,i], 0., .06)
@@ -129,10 +128,10 @@ class StreamBufferTests(unittest.TestCase):
     def test_owns_reused_tensor_and_numpy_buffers(self):
         torch.manual_seed(31)
         inputs, _, _ = linear_events(frames=12)
-        model = randomize_heads(HandTransformer(small()).eval(), std=.01)
+        model = randomize_heads(HandLite(small()).eval(), std=.01)
         features, valid, camera, capture, arrival, _ = (value[0] for value in inputs)
         for numpy_buffer in (False, True):
-            reference, stream = EventStream(model), EventStream(model)
+            reference, stream = LiteStream(model), LiteStream(model)
             buffer = np.empty(features.shape[1:], np.float32) if numpy_buffer else torch.empty_like(features[0])
             mask_buffer = np.empty(valid.shape[1:], bool) if numpy_buffer else torch.empty_like(valid[0])
             for i in range(len(camera)):

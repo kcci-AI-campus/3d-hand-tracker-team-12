@@ -1,8 +1,8 @@
 """hand_tracking.events: event acceptance, latest rays and the query-time anchor."""
 import unittest
-from model_helpers import asynchronous, synthetic_events
+from model_helpers import asynchronous, lite_anchor, synthetic_events
 import torch
-from hand_tracking.events import accepted_captures, event_anchor, latest_rays, make_events, query_anchor
+from hand_tracking.events import accepted_captures, latest_rays, make_events, query_anchor
 
 
 def accepted_by_running_max(camera, capture, present):
@@ -14,6 +14,11 @@ def accepted_by_running_max(camera, capture, present):
         previous = torch.cat((torch.full_like(maximum[:,:1], float('-inf')), maximum[:,:-1]), dim=1)
         accepted |= belongs & (capture > previous)
     return accepted
+
+
+def plain_anchor(*inputs, lookback_s=.2):
+    """HandLite's plain anchor (no single-ray rule), as the removed event_anchor baseline."""
+    return lite_anchor(*inputs, anchor_ray_depth=False, anchor_lookback_s=lookback_s)
 
 
 class AcceptanceTests(unittest.TestCase):
@@ -44,7 +49,7 @@ class LatestRayTests(unittest.TestCase):
         self.assertTrue(mask[0,0,:2].all())
         self.assertAlmostEqual(capture[0,0,2].item(), -.1, places=5)
         # The sample of that event still triangulates from cameras 0 and 1.
-        anchor = event_anchor(*inputs, inputs[4][:,-1:], lookback_s=0.)[0,0]
+        anchor = plain_anchor(*inputs, inputs[4][:,-1:], lookback_s=0.)[0,0]
         torch.testing.assert_close(anchor, base, atol=1e-5, rtol=0)
 
     def test_stale_capture_arriving_late_does_not_replace_newer(self):
@@ -55,7 +60,7 @@ class LatestRayTests(unittest.TestCase):
         inputs[4] = torch.tensor([[-.3,-.05,-.1,-.1]])
         order = torch.argsort(inputs[4][0])
         inputs = [value[:,order] for value in inputs]
-        anchor = event_anchor(*inputs, inputs[4][:,-1:], lookback_s=0.)[0,0]
+        anchor = plain_anchor(*inputs, inputs[4][:,-1:], lookback_s=0.)[0,0]
         torch.testing.assert_close(anchor, new, atol=1e-5, rtol=0)
 
 
@@ -66,13 +71,13 @@ class AnchorTests(unittest.TestCase):
         inputs[1] = inputs[1].clone()
         inputs[1][:,:,1] = False
         inputs[1][:,:,1,3] = True                                                 # hand 1: only joint 3
-        anchor = event_anchor(*inputs, torch.tensor([[0.]]))[0,0]
+        anchor = plain_anchor(*inputs, torch.tensor([[0.]]))[0,0]
         torch.testing.assert_close(anchor[0], base[0], atol=1e-5, rtol=0)
         torch.testing.assert_close(anchor[1], base[1,3].expand(21,3), atol=1e-5, rtol=0)
         # Nothing arrived yet: origin; samples older than the hold span are not used.
         first = float(inputs[4][0,0])
-        self.assertTrue((event_anchor(*inputs, torch.tensor([[first-.01]])) == 0).all())
-        self.assertTrue((event_anchor(*inputs, torch.tensor([[1.]]), lookback_s=0.) == 0).all())
+        self.assertTrue((plain_anchor(*inputs, torch.tensor([[first-.01]])) == 0).all())
+        self.assertTrue((plain_anchor(*inputs, torch.tensor([[1.]]), lookback_s=0.) == 0).all())
 
     def test_samples_on_a_line_are_extrapolated_to_the_query(self):
         base = torch.randn(2,21,3)*.1

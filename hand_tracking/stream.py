@@ -1,11 +1,14 @@
-"""Arrival-ordered event buffering and inference caches, separate from model math."""
-from dataclasses import dataclass, replace
-from typing import NamedTuple
-import torch
-from .contracts import RawEvents, EncodedEvents, Evidence
-from .events import relative_events
+"""Arrival-ordered event buffering for streaming inference, separate from model math.
 
-STREAM_KEEP_MARGIN_S = .5
+EventStream owns pushed frames, drops stale captures and prunes old events; each model's
+stream subclass says how its per-event encoding moves between relative and absolute time
+(to_absolute) and how a query is decoded from the stored events (decode)."""
+from dataclasses import dataclass
+from typing import Any, NamedTuple
+import torch
+from .contracts import RawEvents
+from .constants import STREAM_KEEP_MARGIN_S, check_event
+from .events import relative_events
 
 
 class PendingEvent(NamedTuple):
@@ -18,23 +21,22 @@ class PendingEvent(NamedTuple):
 
 @dataclass
 class StreamCache:
-    """Unbatched tensors with absolute float64 capture, arrival and sample times."""
+    """Stored events (absolute float64 capture and arrival times) and their encodings:
+    any object with map(fn) and append(other, dim)."""
     raw: RawEvents
-    encoded: EncodedEvents
-    evidence: Evidence | None
+    encoded: Any
 
     def select(self, keep):
         return StreamCache({key: value[keep] for key, value in self.raw.items()},
-                           self.encoded.map(lambda value: value[keep]),
-                           None if self.evidence is None else self.evidence.map(lambda value: value[keep]))
+                           self.encoded.map(lambda value: value[keep]))
 
 
 class EventStream:
-    """Cache each accepted camera event once; query arbitrary current/future times.
+    """Encode each accepted camera event once; query any time from the latest arrival on.
 
-    Events must arrive in order. Empty detections replace older camera rays;
-    duplicate or older captures are dropped, matching the batch event policy.
-    push() owns its input tensors. query()/flush() batch all pending encodings.
+    Events must arrive in order. Empty detections replace older camera rays; duplicate or
+    older captures are dropped, matching the batch event policy (events.accepted_captures).
+    push() owns its input tensors. query()/flush() encode all pending events in one batch.
     """
 
     def __init__(self, model):
@@ -63,7 +65,7 @@ class EventStream:
         """Own a frame; return False when its capture does not advance that camera."""
         arrival_time = float(arrival_time)
         capture_time = float(capture_time)
-        camera = int(camera)
+        camera = check_event(camera, torch.as_tensor(features).shape, torch.as_tensor(valid).shape)
         latest = self._latest_arrival()
         if latest is not None and arrival_time < latest:
             raise ValueError('Events must be pushed in arrival order')
@@ -99,20 +101,16 @@ class EventStream:
             raw = {key: torch.cat((old.raw[key], value)) for key, value in raw.items()}
         count = len(raw['camera'])
         targets = torch.arange(count-len(self.pending), count, device=self.device)
-        previous = None if old is None or old.evidence is None else old.evidence.map(lambda value: value[None])
-        encoded, _, evidence = self.model.encode_events(relative_events(raw, origin), targets, previous)
-        encoded = encoded.map(lambda value: value[0])
-        encoded = replace(encoded, stamp=encoded.stamp.double()+origin)
-        evidence = None if evidence is None else evidence.map(lambda value: value[0])
+        encoded = self.model.encode_events(relative_events(raw, origin), targets).map(lambda value: value[0])
+        encoded = self.to_absolute(encoded, origin)
         if old is not None:
             encoded = old.encoded.append(encoded, dim=0)
-            if evidence is not None:
-                evidence = old.evidence.append(evidence, dim=0)
-        self.store = StreamCache(raw, encoded, evidence)
+        self.store = StreamCache(raw, encoded)
         self.pending.clear()
 
     @torch.inference_mode()
     def query(self, time):
+        """Pose [2,21,3] at time (not before the latest arrival)."""
         time = float(time)
         latest = self._latest_arrival()
         if latest is None:
@@ -120,8 +118,11 @@ class EventStream:
         if time < latest:
             raise ValueError('Query before the latest arrival')
         self.flush()
-        stored = self.store
-        encoded = stored.encoded.map(lambda value: value[None])
-        encoded = replace(encoded, stamp=(encoded.stamp-time).float())
-        query = torch.zeros(1, 1, device=self.device)
-        return self.model.decode_queries(relative_events(stored.raw, time), encoded, query)[0,0]
+        return self.decode(time)
+
+    def to_absolute(self, encoded, origin):
+        """A new unbatched encoding with its times on origin -> absolute float64 times."""
+        return encoded
+
+    def decode(self, time):
+        raise NotImplementedError

@@ -6,7 +6,7 @@ import numpy as np
 if importlib.util.find_spec('torch') is None:
     raise unittest.SkipTest('Install requirements-transformer.txt for model tests')
 import torch
-from hand_tracking.config import ModelConfig
+from hand_tracking.config import LiteConfig
 from hand_tracking.contracts import MODEL_INPUT_KEYS
 from hand_tracking.data import read_clip
 
@@ -15,17 +15,29 @@ ORIGINS = torch.tensor([[-1.,-1.,.5], [1.,-1.,.5], [0.,1.,1.]])
 
 
 def small(**overrides):
-    """A fast model: width 32, 4 heads, 1 block, 1 encoder layer, no dropout."""
-    return ModelConfig(**{**dict(dim=32, heads=4, blocks=1, encoder_layers=1, dropout=0.), **overrides})
+    """A fast HandLite: width 32, 4 heads, 1 block, 4 slots per camera, no dropout."""
+    return LiteConfig(**{**dict(dim=32, heads=4, blocks=1, dropout=0., slots_per_camera=4), **overrides})
 
 
 def randomize_heads(model, std=.1):
-    """Give the zero-initialised residual heads weights, so outputs depend on the inputs."""
-    heads = [model.output] + ([model.calibration_output] if model.config.calibration_head else [])
+    """Give the zero-initialised heads (residual, gap embedding, calibration) weights, so
+    outputs depend on every input."""
+    heads = [model.decoder.output]+[head for head in (model.decoder.gap,) if head is not None]
+    if model.calibrator is not None:
+        heads.append(model.calibrator.output)
     for head in heads:
         for parameter in head[-1].parameters():
             torch.nn.init.normal_(parameter, std=std)
     return model
+
+
+def lite_anchor(features, valid, camera, capture, arrival, present, query, **overrides):
+    """The model-free anchor [B,Q,2,21,3]: HandLite without a calibration head and with its
+    zero-initialised residual head, so its pose is the geometric anchor."""
+    from hand_tracking.lite import HandLite
+    model = HandLite(LiteConfig(**{'calibration_head': False, **overrides})).eval()
+    with torch.no_grad():
+        return model(features, valid, camera, capture, arrival, present, query)
 
 
 def synthetic_events(position, captures, cameras, delay=.06):
@@ -81,7 +93,7 @@ def sim_clip(folder, **overrides):
     """Simulate the 30-frame demo motion into folder/a.npz and read it back as a clip."""
     from gigahands_sim import Config, demo_motion, simulate, save_dataset
     positions, times = demo_motion(30)
-    config = Config()
+    config = Config(query_sync_camera3=False)  # Fixed grid for model-only fixtures.
     for key, value in overrides.items():
         setattr(config, key, value)
     save_dataset(Path(folder)/'a.npz', simulate(positions, times, config))

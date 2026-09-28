@@ -50,18 +50,23 @@ def error_totals(prediction, target, mask, world_unit_cm):
 
 @dataclass
 class PoseTotals:
-    """Running MPJPE and PCK@20mm over the final query of each window (the reported metric)."""
+    """Running MPJPE and PCK@20mm over the final query of each window (the reported metric),
+    against the target frame's targets, and MPJPE against the world-frame targets."""
     error_mm: float = 0.
     correct: int = 0
     joints: int = 0
     samples: int = 0
+    world_error_mm: float = 0.
 
     def add(self, pose, batch):
         """pose [B,Q,2,21,3] against a batch's target/target_mask/world_unit_cm."""
         with torch.no_grad():
             error, correct, joints = error_totals(pose[:,-1].float(), batch['target'][:,-1],
                                                   batch['target_mask'][:,-1], batch['world_unit_cm'])
+            world, _, _ = error_totals(pose[:,-1].float(), batch['target_world'][:,-1], batch['target_mask'][:,-1],
+                                       batch['world_unit_cm'])
         self.error_mm += error.item()
+        self.world_error_mm += world.item()
         self.correct += correct.item()
         self.joints += joints.item()
         self.samples += len(pose)
@@ -73,7 +78,8 @@ class PoseTotals:
     def summary(self):
         if not self.joints:
             raise ValueError('No valid observations/targets in this loader')
-        return dict(mpjpe_mm=self.mpjpe_mm, pck20=self.correct/self.joints, samples=self.samples, joints=self.joints)
+        return dict(mpjpe_mm=self.mpjpe_mm, pck20=self.correct/self.joints, mpjpe_world_mm=self.world_error_mm/self.joints,
+                    samples=self.samples, joints=self.joints)
 
 
 @dataclass

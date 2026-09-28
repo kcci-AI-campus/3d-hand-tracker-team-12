@@ -1,6 +1,5 @@
 # Deployment export and runtime checks; in addition to requirements-transformer.txt.
-# export_onnx.py (HandTransformer): onnx, onnxscript, onnxruntime.
-# export_lite.py (HandLite): the same plus ncnn and pnnx for ncnn graphs.
+# training/export.py: onnx, onnxscript, onnxruntime; plus ncnn and pnnx for ncnn graphs.
 # Tested with torch 2.14, onnx 1.23, onnxscript 0.7.2, onnxruntime 1.30, ncnn/pnnx 20260526.
 # On the device, hand_tracking/lite_runtime.py needs only numpy and ncnn (or onnxruntime).
 onnx>=1.23
