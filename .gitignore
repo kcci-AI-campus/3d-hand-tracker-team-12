@@ -13,3 +13,6 @@ build/
 build-*/
 *.zip
 *.log
+
+# Trained weights (large binaries)
+checkpoints/

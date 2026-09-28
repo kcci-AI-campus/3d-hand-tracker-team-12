@@ -173,6 +173,8 @@ Windows에서 VS Code로 실행하고 VcXsrv로 화면을 표시하는 절차는
 ├── cpp/hand_lite/           # HandLite v1 C++ 런타임 (보관용, HandLiteV3 이식 참고)
 ├── local_camera_ncnn/       # Windows ncnn 카메라 앱 (실행 파일은 dist/)
 ├── local_camera_ncnn_pi/    # 라즈베리 파이 ncnn 카메라 앱
+├── hand_tracker_slave/      # slave 파이: 카메라 → 2D 손 관절 → UV2/UDP (마스터로)
+├── hand_tracker_master/     # 마스터 파이: slave 2대 + 자기 카메라 → HandDirect-wrist → 3D 관절 H3D1/UDP (PC로)
 ├── notebooks/               # Colab 노트북
 ├── tests/                   # python -m unittest discover -s tests
 ├── docs/                    # GUIDE, MODELS, HANDLITEV3·HANDDIRECT_ARCHITECTURE, LATENCY, reviews/, archive/

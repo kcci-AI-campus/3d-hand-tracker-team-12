@@ -14,8 +14,14 @@ int main() {
     try { std::istringstream eof(""); PromptDestination(eof, output); }
     catch (const std::runtime_error&) { cancelled = true; }
     Check(cancelled);
+    std::istringstream cameras("\n2\n x \n 1 \n");
+    Check(PromptCameraId(cameras, output) == 1);
+    cancelled = false;
+    try { std::istringstream eof(""); PromptCameraId(eof, output); }
+    catch (const std::runtime_error&) { cancelled = true; }
+    Check(cancelled);
     uv_stream::Sender disabled("",5001);
     Check(disabled.Sent() == 0 && disabled.Failed() == 0 && disabled.LastError() == 0);
-    std::cout << "CLI validation/default/retry/EOF OK\n";
+    std::cout << "CLI validation/default/retry/EOF and camera id OK\n";
   } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }
