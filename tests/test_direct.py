@@ -1,5 +1,7 @@
 """HandDirect: networks only; batch/stream equivalence and the deployment runtime."""
+from dataclasses import asdict
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,9 +13,6 @@ from hand_tracking.config import DirectConfig
 from hand_tracking.direct import DirectStream, HandDirect
 from hand_tracking.events import make_events
 from hand_tracking import direct_runtime
-
-EXPORT_MODULES = ('onnx', 'onnxscript', 'onnxruntime')
-
 
 def direct(**overrides):
     return DirectConfig(**{**dict(dim=32, heads=4, blocks=1, fusion_blocks=1, dropout=0., slots_per_camera=4),
@@ -72,7 +71,7 @@ class DirectModelTests(unittest.TestCase):
     def test_stream_matches_forward(self):
         model = with_outputs(HandDirect(direct()))
         self.assertIsInstance(stream_for(model), DirectStream)
-        self.assertIsInstance(build_model('direct', direct()), HandDirect)
+        self.assertIsInstance(build_model(direct()), HandDirect)
         inputs = moving_events(seconds=2.)
         stream, epoch = DirectStream(model), 1_700_000_000.
         for i in range(inputs[0].shape[1]):
@@ -87,36 +86,49 @@ class DirectModelTests(unittest.TestCase):
         self.assertFalse(stream.push(0, inputs[0][0,0], inputs[1][0,0], epoch-5., epoch+1.))   # stale capture
 
 
-@unittest.skipIf(any(importlib.util.find_spec(name) is None for name in EXPORT_MODULES),
-                 'Install requirements-export.txt for runtime tests')
+class TorchGraphs:
+    """The exported graphs' PyTorch modules, run like ncnn (inputs without a batch axis)."""
+
+    def __init__(self, model):
+        self.modules = dict(encoder=model.encoder, query=model.query_network)
+
+    @torch.no_grad()
+    def run(self, name, *arrays):
+        return self.modules[name](*[torch.as_tensor(np.asarray(a, np.float32))[None] for a in arrays])[0].numpy()
+
+
+def runtime_worst(model, runtime, inputs):
+    """Largest |runtime - stream| over queries after every fifth event and after a camera outage."""
+    stream, worst = DirectStream(model), 0.
+    for i in range(inputs[0].shape[1]):
+        event = (int(inputs[2][0,i]), inputs[0][0,i].numpy(), inputs[1][0,i].numpy(),
+                 float(inputs[3][0,i]), float(inputs[4][0,i]))
+        assert runtime.push(*event) == stream.push(*event)
+        if i % 5 == 4:
+            worst = max(worst, float(np.abs(runtime.query(event[4])-stream.query(event[4]).numpy()).max()))
+    outage = event[4]+2.                                                      # no slot within the span
+    return max(worst, float(np.abs(runtime.query(outage)-stream.query(outage).numpy()).max()))
+
+
 class DirectRuntimeTests(unittest.TestCase):
-    def test_exported_runtime_matches_stream(self):
-        from hand_tracking.direct_export import export_direct
-        backends = ['onnxruntime'] + (['ncnn'] if all(importlib.util.find_spec(n) for n in ('ncnn', 'pnnx')) else [])
-        formats = ['onnx'] + (['ncnn'] if 'ncnn' in backends else [])
+    def test_runtime_matches_stream(self):
+        """Slot selection and ages in numpy around the networks equal the PyTorch stream."""
         model = with_outputs(HandDirect(direct()))
-        inputs = moving_events(seed=3)
         with tempfile.TemporaryDirectory() as folder:
-            directory = Path(folder)/'export'
-            export_direct(model, directory, formats)
-            runtimes = {name: direct_runtime.DirectRuntime(directory, backend=name) for name in backends}
-            stream = DirectStream(model)
-            worst = dict.fromkeys(runtimes, 0.)
-            for i in range(inputs[0].shape[1]):
-                event = (int(inputs[2][0,i]), inputs[0][0,i].numpy(), inputs[1][0,i].numpy(),
-                         float(inputs[3][0,i]), float(inputs[4][0,i]))
-                self.assertEqual({runtime.push(*event) for runtime in runtimes.values()}, {stream.push(*event)})
-                if i % 5 == 4:
-                    expected = stream.query(event[4]).numpy()
-                    for name, runtime in runtimes.items():
-                        worst[name] = max(worst[name], float(np.abs(runtime.query(event[4])-expected).max()))
-            outage = event[4]+2.                                                  # no slot within the span
-            expected = stream.query(outage).numpy()
-            for name, runtime in runtimes.items():
-                worst[name] = max(worst[name], float(np.abs(runtime.query(outage)-expected).max()))
-        self.assertLess(worst['onnxruntime'], 1e-4)
-        if 'ncnn' in worst:
-            self.assertLess(worst['ncnn'], 2e-3)                              # ncnn may use fp16
+            (Path(folder)/direct_runtime.META_FILE).write_text(json.dumps(dict(
+                architecture='direct', export_format=direct_runtime.EXPORT_FORMAT, config=asdict(model.config))))
+            runtime = direct_runtime.DirectRuntime(folder, graphs=TorchGraphs(model))
+            self.assertLess(runtime_worst(model, runtime, moving_events(seed=3)), 1e-5)
+
+    @unittest.skipIf(any(importlib.util.find_spec(name) is None for name in ('ncnn', 'pnnx')),
+                     'Install requirements-export.txt for ncnn tests')
+    def test_exported_ncnn_runtime_matches_stream(self):
+        from hand_tracking.direct_export import export_direct
+        model = with_outputs(HandDirect(direct()))
+        with tempfile.TemporaryDirectory() as folder:
+            export_direct(model, Path(folder)/'export')
+            runtime = direct_runtime.DirectRuntime(Path(folder)/'export')
+            self.assertLess(runtime_worst(model, runtime, moving_events(seed=3)), 2e-3)   # ncnn may use fp16
 
 
 if __name__ == '__main__':

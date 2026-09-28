@@ -1,12 +1,18 @@
 """The C++ runtime's golden fixture (cpp/hand_lite/tests/data) still describes the Python
 LiteRuntime: replay the recorded network outputs through it and compare every input,
 outcome and pose. When this fails after a deliberate Python change, regenerate the fixture
-with cpp/hand_lite/tools/make_golden.py (and rebuild/run the C++ golden_test)."""
+with cpp/hand_lite/tools/make_golden.py (and rebuild/run the C++ golden_test).
+
+HandLite v1's Python runtime was removed when HandLiteV3 became the model (2026-09-28); the C++
+runtime is kept as a reference for a HandLiteV3 port, so this check skips without it."""
 from collections import deque
 from pathlib import Path
 import unittest
 import numpy as np
-from hand_tracking.lite_runtime import LiteRuntime
+try:
+    from hand_tracking.lite_runtime import LiteRuntime
+except ImportError:
+    raise unittest.SkipTest('HandLite v1 Python runtime removed; cpp/hand_lite is kept for reference only')
 
 DATA = Path(__file__).resolve().parents[1]/'cpp'/'hand_lite'/'tests'/'data'
 

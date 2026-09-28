@@ -1,31 +1,28 @@
-"""Checkpoints: model and input layout together (including pre-refactor checkpoints), and
-the full training state for resuming. `architecture` names the model class."""
+"""Checkpoints: model and input layout together, and the full training state for resuming."""
 from dataclasses import asdict, dataclass
 import torch
-from .config import SamplingConfig, saved_config
+from .accelerator import is_xla, manual_seed, rng_state, to_cpu
+from .config import ARCHITECTURES, SamplingConfig, architecture_of, saved_config
 from .direct import DirectStream, HandDirect
-from .lite import HandLite, LiteStream
+from .model import HandLiteV3, LiteV3Stream
 
-MODELS = {'lite': HandLite, 'direct': HandDirect}
-STREAMS = {HandLite: LiteStream, HandDirect: DirectStream}
+# Architecture name -> (model, event-by-event stream); config.ARCHITECTURES holds their configs.
+MODELS = {'litev3': (HandLiteV3, LiteV3Stream), 'direct': (HandDirect, DirectStream)}
+assert set(MODELS) == set(ARCHITECTURES)
+
+INPUT_CONTRACT = ('events [B,E,2,21,14]+valid+camera+capture/arrival seconds+present, query '
+                  'times [B,Q] seconds -> pose [B,Q,2,21,3] and expected joint error [B,Q,2,21]; '
+                  'or stream_for(model) event by event; XYZ world units')
 
 
-def architecture_of(model):
-    return next(name for name, model_type in MODELS.items() if isinstance(model, model_type))
-
-
-def build_model(architecture, config):
-    return MODELS[architecture](config)
+def build_model(config):
+    """The model of a config (config.ARCHITECTURES)."""
+    return MODELS[architecture_of(config)][0](config)
 
 
 def stream_for(model):
     """Event-by-event runner of the model (results equal forward())."""
-    return STREAMS[type(model)](model)
-
-
-INPUT_CONTRACT = ('events [B,E,2,21,14]+valid+camera+capture/arrival seconds+present, query '
-                  'times [B,Q] seconds -> pose [B,Q,2,21,3], calibration per query [B,Q,3,6] (lite); '
-                  'or stream_for(model) event by event; XYZ world units')
+    return MODELS[architecture_of(model.config)][1](model)
 
 
 @dataclass
@@ -36,32 +33,33 @@ class LoadedCheckpoint:
 
 
 def save_checkpoint(path, value):
-    """Write atomically: a crash never leaves a truncated checkpoint at path."""
+    """Write atomically: a crash never leaves a truncated checkpoint at path. Tensors are
+    saved on CPU (XLA tensors would need torch_xla to load)."""
     temporary = path.with_suffix('.tmp')
-    torch.save(value, temporary)
+    torch.save(to_cpu(value), temporary)
     temporary.replace(path)
 
 
 def load_checkpoint(path, device='cpu'):
     saved = torch.load(path, map_location='cpu', weights_only=True)
-    architecture = saved.get('architecture')
-    if architecture not in MODELS:
-        raise ValueError(f'Unsupported checkpoint architecture {architecture!r} '
-                         f'(HandTransformer was removed); choose from {sorted(MODELS)}')
-    model = build_model(architecture, saved_config(architecture, saved['model_config'])).to(device)
+    if saved.get('architecture') not in MODELS:
+        raise ValueError(f"Not a checkpoint of {sorted(MODELS)}: {saved.get('architecture')!r}")
+    model = build_model(saved_config(saved['model_config'], saved['architecture'])).to(device)
     model.load_state_dict(saved['model'])
     model.eval()
-    return LoadedCheckpoint(model, SamplingConfig.from_checkpoint(saved), saved)
+    return LoadedCheckpoint(model, SamplingConfig(**saved['sampling_config']), saved)
 
 
 def training_checkpoint(model, sampling, optimizer, scheduler, scaler, epoch, best_val_mpjpe_mm, options):
     """Everything needed to resume after `epoch` (0-based) and to load the model alone."""
-    cuda = next(model.parameters()).device.type == 'cuda'
-    return dict(model=model.state_dict(), architecture=architecture_of(model), model_config=asdict(model.config),
+    device = next(model.parameters()).device
+    cuda = device.type == 'cuda'
+    return dict(model=model.state_dict(), architecture=architecture_of(model.config), model_config=asdict(model.config),
                 sampling_config=asdict(sampling),
                 optimizer=optimizer.state_dict(), scheduler=scheduler.state_dict(), scaler=scaler.state_dict(),
                 epoch=epoch, best_val_mpjpe_mm=best_val_mpjpe_mm, rng=torch.get_rng_state(),
-                cuda_rng=torch.cuda.get_rng_state_all() if cuda else None, training_options=options,
+                cuda_rng=torch.cuda.get_rng_state_all() if cuda else None, xla_rng=rng_state(device),
+                training_options=options,
                 torch_version=str(torch.__version__), parameters=sum(p.numel() for p in model.parameters()),
                 input_contract=INPUT_CONTRACT)
 
@@ -74,6 +72,9 @@ def restore_training(path, model, optimizer, scheduler, scaler):
     scheduler.load_state_dict(saved['scheduler'])
     scaler.load_state_dict(saved['scaler'])
     torch.set_rng_state(saved['rng'])
-    if next(model.parameters()).device.type == 'cuda' and saved['cuda_rng'] is not None:
+    device = next(model.parameters()).device
+    if device.type == 'cuda' and saved['cuda_rng'] is not None:
         torch.cuda.set_rng_state_all(saved['cuda_rng'])
+    if is_xla(device) and saved.get('xla_rng') is not None:
+        manual_seed(device, int(saved['xla_rng']))
     return saved['epoch']+1, saved['best_val_mpjpe_mm']

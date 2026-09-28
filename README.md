@@ -2,7 +2,7 @@
 
 ## 두 손 3D 포즈 모델
 
-비동기로 도착하는 카메라 3대의 2D 손 관절로 원하는 시각의 두 손 3D 관절을 예측하는 모델(기본 HandDirect: 신경망만으로 좌표 직접 출력, 비교용 HandLite: 삼각측량 + 신경망 보정)과 학습/검증/추론/배포 코드를 제공합니다. 구조와 실행 방법은 [docs/MODELS.md](docs/MODELS.md)를 참고하세요. 본학습은 별도 실행하며 실시간 수신기와의 자동 연결은 아직 포함하지 않습니다.
+비동기로 도착하는 카메라 3대의 2D 손 관절로 원하는 시각의 두 손 3D 관절을 예측하는 모델(기본 HandLiteV3: 직선 맞춤 삼각측량 기준점 + 신경망 보정, 비교용 HandDirect: 신경망만으로 좌표 직접 출력)과 학습/검증/추론/배포 코드를 제공합니다. 구조와 실행 방법은 [docs/MODELS.md](docs/MODELS.md)를 참고하세요. 본학습은 별도 실행하며 실시간 수신기와의 자동 연결은 아직 포함하지 않습니다.
 
 ## GigaHands 학습 데이터 생성 GUI
 
@@ -163,19 +163,19 @@ Windows에서 VS Code로 실행하고 VcXsrv로 화면을 표시하는 절차는
 │   ├── world_landmarks_viewer.py
 │   ├── latency_recorder.py, run_latency.ps1   # 지연 측정 (docs/LATENCY.md)
 │   └── download_model.py    #   Hand Landmarker 모델 → camera/models/
-├── hand_tracking/           # 손 포즈 모델 라이브러리: HandDirect, HandLite (docs/MODELS.md)
+├── hand_tracking/           # 손 포즈 모델 라이브러리: HandLiteV3, HandDirect (docs/MODELS.md)
 ├── training/                # 학습·평가·추론·내보내기 (python -m training.<이름>)
 │   ├── train.py, evaluate.py, predict.py
-│   ├── export.py            #   ONNX·ncnn 내보내기 + 런타임 검증
+│   ├── export.py            #   ncnn 내보내기 + 런타임 검증
 │   └── build_colab_notebook.py
 ├── gigahands_*.py, motion_archive.py, npz_reader.py, start_gigahands.ps1
 │                            # GigaHands 시뮬레이터·데이터셋 생성 (GIGAHANDS.md)
-├── cpp/hand_lite/           # HandLite C++ 런타임
+├── cpp/hand_lite/           # HandLite v1 C++ 런타임 (보관용, HandLiteV3 이식 참고)
 ├── local_camera_ncnn/       # Windows ncnn 카메라 앱 (실행 파일은 dist/)
 ├── local_camera_ncnn_pi/    # 라즈베리 파이 ncnn 카메라 앱
 ├── notebooks/               # Colab 노트북
 ├── tests/                   # python -m unittest discover -s tests
-├── docs/                    # GUIDE, MODELS, HANDDIRECT·HANDLITE_ARCHITECTURE, LATENCY, reviews/
+├── docs/                    # GUIDE, MODELS, HANDLITEV3·HANDDIRECT_ARCHITECTURE, LATENCY, reviews/, archive/
 ├── requirements-*.txt
 ├── exports/, samples/, profiles/, latency_logs/, runs/, dist/   # 데이터·결과 (대부분 git 제외)
 ├── GIGAHANDS.md

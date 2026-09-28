@@ -1,11 +1,11 @@
 """HandDirect deployment runtime without PyTorch: slot selection around the two exported
-networks, run by ncnn or ONNX Runtime. Mirrors hand_tracking.direct.DirectStream.
+networks, run by ncnn. Mirrors hand_tracking.direct.DirectStream.
 
-    runtime = DirectRuntime('exports/direct_model', backend='ncnn')
+    runtime = DirectRuntime('exports/direct_model')
     runtime.push(camera, features [2,21,14], valid [2,21], capture_time, arrival_time)
     pose = runtime.query(time)          # [2,21,3] world units
 
-Times are absolute seconds (float64). Needs numpy plus `ncnn` or `onnxruntime`.
+Times are absolute seconds (float64). Needs numpy and `ncnn`.
 """
 from dataclasses import dataclass
 import json
@@ -14,10 +14,10 @@ import numpy as np
 from .config import DirectConfig
 from .constants import (NUM_CAMERAS, NUM_HANDS, NUM_JOINTS, MODEL_CHANNELS, UV, RAY_ORIGIN, RAY_DIRECTION, DELAY,
                         TIME_UNIT_S, STREAM_KEEP_MARGIN_S, check_event)
-from .lite_runtime import NcnnGraphs, OnnxGraphs, select_slot_events
+from .runtime import NcnnGraphs, select_slot_events
 
 META_FILE = 'direct.json'
-EXPORT_FORMAT = 1
+EXPORT_FORMAT = 2   # 2: ncnn only (pnnx), graph input shapes in the metadata
 GRAPHS = ('encoder', 'query')
 
 
@@ -37,21 +37,14 @@ class _Event:
 
 
 class DirectRuntime:
-    def __init__(self, directory, backend='ncnn', threads=1, fp16=True, graphs=None):
-        """graphs: any object with run(name, *arrays), instead of loading a backend."""
+    def __init__(self, directory, threads=1, fp16=True, graphs=None):
+        """graphs: any object with run(name, *arrays), instead of loading ncnn."""
         directory = Path(directory)
         meta = json.loads((directory/META_FILE).read_text(encoding='utf-8'))
         if meta.get('architecture') != 'direct' or meta.get('export_format') != EXPORT_FORMAT:
             raise ValueError(f'{directory} is not a HandDirect export of format {EXPORT_FORMAT}')
         self.config = DirectConfig(**meta['config'])
-        if graphs is not None:
-            self.graphs = graphs
-        elif backend == 'ncnn':
-            self.graphs = NcnnGraphs(directory, threads, fp16, GRAPHS)
-        elif backend == 'onnxruntime':
-            self.graphs = OnnxGraphs(directory, threads, GRAPHS)
-        else:
-            raise ValueError("backend must be 'ncnn' or 'onnxruntime'")
+        self.graphs = graphs if graphs is not None else NcnnGraphs(directory, GRAPHS, threads, fp16)
         self.keep_s = self.config.context_s+STREAM_KEEP_MARGIN_S
         self.reset()
 

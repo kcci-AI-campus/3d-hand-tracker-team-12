@@ -1,15 +1,14 @@
-"""hand_tracking.data: event recovery from exports, windows, manifest checks, rig augmentation."""
+"""hand_tracking.data: event recovery from exports, windows, manifest checks, rig frame, hands in view."""
 import json
 from pathlib import Path
 import tempfile
 import unittest
 import numpy as np
-from model_helpers import batch_of, sim_clip, lite_anchor
+from model_helpers import sim_clip
 import torch
 from gigahands_sim import Config, demo_motion, simulate, save_dataset
 from hand_tracking.contracts import MODEL_INPUT_KEYS, TARGET_KEYS, WINDOW_SAMPLE_KEYS
 from hand_tracking.data import HandWindows, cached_clip, make_sample, read_clip, read_manifest
-from hand_tracking.geometry import apply_calibration
 
 
 def synthetic_clip(events=6, queries=4):
@@ -45,18 +44,16 @@ class WindowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             make_sample(clip, 0, queries=clip['window']+1)
 
-    def test_hands_the_input_never_shows_have_no_target(self):
-        clip = synthetic_clip(events=6, queries=4)    # events every 30 ms, queries every 50 ms
-        clip['event_valid'][:, 1] = False              # hand 1 never detected
-        clip['event_valid'][:2, 0] = False             # hand 0 only from the third event (60 ms) on
-        kept = make_sample(clip, 0, max_events=8)['target_mask']
-        seen = make_sample(clip, 0, max_events=8, seen_span_s=.5)['target_mask']
-        self.assertTrue(kept.all())
-        self.assertFalse(seen[:, 1].any())
-        # Hand 0's first detection arrives at 60 ms: queries at 0 and 50 ms have not seen it yet.
-        self.assertEqual(seen[:, 0].all(-1).tolist(), [False, False, True, True])
-        # At 100 ms a 10 ms span only reaches back to captures from 90 ms: none has arrived yet.
-        self.assertFalse(make_sample(clip, 0, max_events=8, seen_span_s=.01)['target_mask'][2].any())
+    def test_hands_out_of_every_view_have_no_position_target(self):
+        clip = synthetic_clip(events=6, queries=4)
+        clip['hand_in_view'] = np.array([[True, True], [True, False], [True, False], [True, True]])
+        masked = make_sample(clip, 0, max_events=8)
+        kept = make_sample(clip, 0, max_events=8, mask_out_of_view=False)
+        np.testing.assert_array_equal(masked['hand_in_view'].numpy(), clip['hand_in_view'])
+        np.testing.assert_array_equal(masked['target_mask'].any(-1).numpy(), clip['hand_in_view'])
+        self.assertTrue(kept['target_mask'].all())
+        # Without the simulator's cameras every hand counts as in view.
+        self.assertTrue(make_sample(synthetic_clip(), 0, max_events=8)['hand_in_view'].all())
 
     def test_make_sample_matches_window_contract(self):
         sample = make_sample(synthetic_clip(), 0, max_events=8)
@@ -117,10 +114,11 @@ class WindowTests(unittest.TestCase):
             direct = cached_clip(root, 'a.npz')
             written, loaded = cached_clip(root, 'a.npz', cache), cached_clip(root, 'a.npz', cache)
             self.assertTrue((cache/'a.npz').is_file())
+            arrays = set(direct)                          # before make_sample memoises '_causal' in a clip
             for clip in (written, loaded):
-                self.assertEqual(set(clip), set(direct))
-                for key, value in direct.items():
-                    np.testing.assert_array_equal(clip[key], value)
+                self.assertEqual(set(clip)-{'_causal'}, arrays)
+                for key in arrays:
+                    np.testing.assert_array_equal(clip[key], direct[key])
                 sample, expected = make_sample(clip, 2, max_events=64), make_sample(direct, 2, max_events=64)
                 for key in expected:
                     torch.testing.assert_close(sample[key], expected[key])
@@ -135,7 +133,6 @@ class CalibrationTargetTests(unittest.TestCase):
         """The rig frame is the world moved by one similarity per clip: hands keep their shape,
         the calibration target shrinks to the cameras' error relative to each other, and the
         corrected rays still triangulate the rig-frame target."""
-        from hand_tracking.geometry import apply_calibration
         with tempfile.TemporaryDirectory() as folder:
             clip = sim_clip(folder, fit_extent=.25, hand_dropout_prob=0, burst_dropout_prob=0, hand_count_timing=False,
                             correlated_pixel_std=0, randomize_errors=False, position_std=.1, angle_std_deg=5.,
@@ -150,36 +147,12 @@ class CalibrationTargetTests(unittest.TestCase):
         torch.testing.assert_close(rig['target_world'], world['target'])
         norms = lambda sample: (sample['calibration_target']/torch.tensor([5*torch.pi/180]*3+[.1]*3)).square().sum()
         self.assertLess(float(norms(rig)), float(norms(world)))
-        # Each frame's corrections on the nominal rays reproduce that frame's target equally
-        # well (the remainder is camera timing and motion).
-        def corrected_error(sample):
-            features = sample['event_features'][None].clone()
-            per_camera = lambda channels: features[:,:,None,...,channels].expand(-1,-1,3,-1,-1,-1)
-            o, d = apply_calibration(sample['calibration_target'][None], per_camera(slice(2,5)), per_camera(slice(5,8)))
-            own = sample['event_camera'][None,:,None,None,None,None].expand(-1,-1,1,2,21,3)
-            features[...,2:5], features[...,5:8] = o.gather(2, own)[:,:,0], d.gather(2, own)[:,:,0]
-            error = (lite_anchor(features, *batch_of(sample)[1:])[0,-1]-sample['target'][-1]).norm(dim=-1)
-            return float(error[sample['target_mask'][-1]].mean())
-        self.assertLess(abs(corrected_error(rig)-corrected_error(world)), .05*corrected_error(world))
 
-    def test_calibration_target_matches_simulator_rig(self):
+    def test_simulated_hands_are_in_view(self):
         with tempfile.TemporaryDirectory() as folder:
-            clip = sim_clip(folder, fit_extent=.25, hand_dropout_prob=0, burst_dropout_prob=0, hand_count_timing=False, correlated_pixel_std=0, randomize_errors=False, position_std=.1, angle_std_deg=5., focal_std_pct=0.,
-                            principal_std_px=0., k1=0., k2=0., pixel_std=0.)
-        sample = make_sample(clip, 4)
-        target = sample['calibration_target'][None]
-        features = sample['event_features'][None].clone()
-        per_camera = lambda channels: features[:,:,None,...,channels].expand(-1,-1,3,-1,-1,-1)
-        o, d = apply_calibration(target, per_camera(slice(2,5)), per_camera(slice(5,8)))
-        own = sample['event_camera'][None,:,None,None,None,None].expand(-1,-1,1,2,21,3)
-        fixed = features.clone()
-        fixed[...,2:5] = o.gather(2, own)[:,:,0]
-        fixed[...,5:8] = d.gather(2, own)[:,:,0]
-        inputs = batch_of(sample)
-        error = lambda f: (lite_anchor(f, *inputs[1:])[0,-1]-sample['target'][-1]).norm(dim=-1)[
-            sample['target_mask'][-1]].mean().item()
-        # The true correction removes the calibration error (up to camera timing/motion).
-        self.assertLess(error(fixed), error(features)*.3)
+            clip = sim_clip(folder)
+        self.assertEqual(clip['hand_in_view'].shape, (len(clip['target_xyz']), 2))
+        self.assertGreater(clip['hand_in_view'].mean(), .9)                       # the demo motion stays in view
 
 
 if __name__ == '__main__':

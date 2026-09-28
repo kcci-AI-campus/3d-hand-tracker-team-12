@@ -1,5 +1,5 @@
-"""End-to-end CLI on a tiny simulated dataset: train (and resume), evaluate both modes, predict,
-for both architectures, and export_lite when its packages are installed."""
+"""End-to-end CLI on a tiny simulated dataset: train (and resume), evaluate, predict and export
+(when ncnn/pnnx are installed) for both architectures."""
 import contextlib
 import importlib.util
 import io
@@ -12,10 +12,9 @@ from model_helpers import small  # noqa: F401  (skips the module without torch)
 from training import evaluate, export, predict, train
 from gigahands_sim import Config, demo_motion, simulate, save_dataset
 
-TINY_MODEL = ['--arch', 'lite', '--dim', '32', '--heads', '4', '--blocks', '1', '--dropout', '0']
-TINY_LITE = ['--arch', 'lite', '--dim', '32', '--heads', '4', '--blocks', '1', '--slots-per-camera', '4', '--dropout', '0']
-TINY_DIRECT = ['--arch', 'direct', '--dim', '32', '--heads', '4', '--blocks', '1', '--slots-per-camera', '4',
-               '--dropout', '0']
+TINY_LITEV3 = ['--dim', '32', '--heads', '4', '--blocks', '1', '--slots-per-camera', '4', '--dropout', '0']
+TINY_DIRECT = ['--arch', 'direct', '--dim', '32', '--heads', '4', '--blocks', '1', '--fusion-blocks', '1',
+               '--slots-per-camera', '4', '--dropout', '0']
 
 
 def tiny_dataset(root):
@@ -48,87 +47,57 @@ class ScriptTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.folder.cleanup()
 
-    def train(self, run, *extra, model=TINY_MODEL):
+    def train(self, run, *extra, model=TINY_LITEV3):
         return quietly(train.main, '--data', self.root/'data', '--output', run, '--epochs', 1,
                        '--batch-size', 2, '--windows-per-clip', 2, '--val-windows-per-clip', 2, '--threads', 2,
                        '--device', 'cpu', *model, *extra)
 
-    def test_train_resume_evaluate_predict(self):
-        run = self.root/'run'
+    def export_report(self, run):
+        if any(importlib.util.find_spec(module) is None for module in ('ncnn', 'pnnx')):
+            self.skipTest('Install requirements-export.txt to test training.export')
+        # pnnx logs from native code; only the report goes through Python's stdout.
+        return json.loads(quietly(export.main, '--checkpoint', run/'best.pt', '--output', run/'deploy',
+                                  '--check-input', self.root/'data'/'val.npz', '--queries', 8))
+
+    def evaluate_and_predict(self, run):
+        quietly(evaluate.main, '--checkpoint', run/'best.pt', '--output', run/'model.json',
+                '--data', self.root/'data', '--windows-per-clip', 2, '--batch-size', 2)
+        evaluation = json.loads((run/'model.json').read_text())
+        self.assertTrue(np.isfinite([evaluation['mpjpe_mm'], evaluation['mpjpe_world_mm']]).all())
+        quietly(predict.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
+                '--output', run/'prediction.npz')
+        with np.load(run/'prediction.npz') as prediction:
+            self.assertEqual(prediction['predicted_xyz'].shape, (2,21,3))
+            return evaluation, set(prediction.files)
+
+    def test_litev3_train_resume_evaluate_predict_export(self):
+        run = self.root/'litev3'
         self.assertIn('epoch=1/1', self.train(run))
         for name in ('run.json', 'metrics.jsonl', 'last.pt', 'best.pt'):
             self.assertTrue((run/name).is_file(), name)
         # Old run.json without a newer flag still resumes when that flag is at its default.
         options = json.loads((run/'run.json').read_text())
-        del options['anchor_hold_s']
+        del options['relative_weight']
         (run/'run.json').write_text(json.dumps(options))
         self.train(run, '--resume')
         self.train(run, '--resume', '--workers', 1, '--cache-dir', self.root/'cache')   # speed settings may change
         with self.assertRaisesRegex(ValueError, 'Resume settings'):
-            self.train(run, '--resume', '--anchor-hold-s', '.25')
-
-        common = ['--data', self.root/'data', '--windows-per-clip', 2, '--batch-size', 2]
-        quietly(evaluate.main, '--checkpoint', run/'best.pt', '--output', run/'model.json', *common)
-        quietly(evaluate.main, '--triangulation-only', '--output', run/'anchor.json', *common)
-        model, anchor = (json.loads((run/f'{name}.json').read_text()) for name in ('model', 'anchor'))
-        self.assertEqual((model['method'], anchor['method']), ('lite', 'triangulation_anchor'))
-        self.assertEqual(model['samples'], anchor['samples'])
-        self.assertTrue(np.isfinite([model['mpjpe_mm'], anchor['mpjpe_mm']]).all())
-
-        quietly(predict.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
-                '--output', run/'prediction.npz')
-        with np.load(run/'prediction.npz') as prediction:
-            self.assertEqual(prediction['predicted_xyz'].shape, (2,21,3))
-            self.assertEqual(prediction['calibration'].shape, (3,6))
-
-    def test_lite_train_evaluate_predict_export(self):
-        run = self.root/'lite'
-        self.assertIn('parameters=', self.train(run, model=TINY_LITE))
-        self.train(run, '--resume', model=TINY_LITE)
-        quietly(evaluate.main, '--checkpoint', run/'best.pt', '--output', run/'model.json',
-                '--data', self.root/'data', '--windows-per-clip', 2, '--batch-size', 2)
-        evaluation = json.loads((run/'model.json').read_text())
-        self.assertEqual(evaluation['method'], 'lite')
-        self.assertTrue(np.isfinite(evaluation['mpjpe_mm']))
-        quietly(predict.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
-                '--output', run/'prediction.npz')
-        with np.load(run/'prediction.npz') as prediction:
-            self.assertEqual(prediction['calibration'].shape, (3,6))            # the final query's correction
-        formats = [name for name, modules in (('onnx', ('onnx', 'onnxscript', 'onnxruntime')), ('ncnn', ('ncnn', 'pnnx')))
-                   if all(importlib.util.find_spec(module) for module in modules)]
-        if not formats:
-            self.skipTest('Install requirements-export.txt to test training.export')
-        # pnnx logs from native code; only the report goes through Python's stdout.
-        report = json.loads(quietly(export.main, '--checkpoint', run/'best.pt', '--output', run/'deploy',
-                                    '--formats', *formats, '--check-input', self.root/'data'/'val.npz',
-                                    '--queries', 8))
-        self.assertEqual(set(report['max_abs_difference']), set(formats))
-        self.assertLess(max(report['max_abs_difference'].values()), 2e-3)
+            self.train(run, '--resume', '--fit-span-s', '.3')
+        evaluation, files = self.evaluate_and_predict(run)
+        self.assertIsNotNone(evaluation['error_miss_mm'])
+        self.assertIsNotNone(evaluation['kind_rate']['triangulated'])
+        self.assertTrue({'anchor_xyz', 'anchor_kind', 'expected_error_mm', 'in_view_probability'} <= files)
+        self.assertLess(self.export_report(run)['max_abs_difference'], 2e-3)
 
     def test_direct_train_evaluate_predict_export(self):
         run = self.root/'direct'
-        self.assertIn('parameters=', self.train(run, '--train-queries', 4, model=TINY_DIRECT))
-        self.train(run, '--resume', '--train-queries', 4, model=TINY_DIRECT)
-        quietly(evaluate.main, '--checkpoint', run/'best.pt', '--output', run/'model.json',
-                '--data', self.root/'data', '--windows-per-clip', 2, '--batch-size', 2)
-        evaluation = json.loads((run/'model.json').read_text())
-        self.assertEqual(evaluation['method'], 'direct')
-        self.assertTrue(np.isfinite([evaluation['mpjpe_mm'], evaluation['mpjpe_world_mm']]).all())
-        self.assertIsNone(evaluation['calibration_mse'])                       # no camera correction
-        quietly(predict.main, '--checkpoint', run/'best.pt', '--input', self.root/'data'/'val.npz',
-                '--output', run/'prediction.npz')
-        with np.load(run/'prediction.npz') as prediction:
-            self.assertEqual(prediction['predicted_xyz'].shape, (2,21,3))
-            self.assertNotIn('calibration', prediction.files)
-        formats = [name for name, modules in (('onnx', ('onnx', 'onnxscript', 'onnxruntime')), ('ncnn', ('ncnn', 'pnnx')))
-                   if all(importlib.util.find_spec(module) for module in modules)]
-        if not formats:
-            self.skipTest('Install requirements-export.txt to test training.export')
-        report = json.loads(quietly(export.main, '--checkpoint', run/'best.pt', '--output', run/'deploy',
-                                    '--formats', *formats, '--check-input', self.root/'data'/'val.npz',
-                                    '--queries', 8))
-        self.assertEqual(set(report['max_abs_difference']), set(formats))
-        self.assertLess(max(report['max_abs_difference'].values()), 2e-3)
+        self.assertIn('parameters=', self.train(run, model=TINY_DIRECT))
+        self.train(run, '--resume', model=TINY_DIRECT)
+        evaluation, files = self.evaluate_and_predict(run)
+        self.assertIsNone(evaluation['error_miss_mm'])                         # no error, anchor or in-view head
+        self.assertIsNone(evaluation['kind_rate']['triangulated'])
+        self.assertNotIn('anchor_kind', files)
+        self.assertLess(self.export_report(run)['max_abs_difference'], 2e-3)
 
     def test_invalid_settings_exit_through_the_parser(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset, get_worker_info
-from .config import LiteConfig, SamplingConfig
-from .constants import NUM_CAMERAS, NUM_HANDS, NUM_JOINTS, FEATURE_CHANNELS, CALIBRATION_PARAMS, RAY_ORIGIN, \
+from .config import LiteV3Config, SamplingConfig
+from .constants import NUM_CAMERAS, NUM_HANDS, NUM_JOINTS, FEATURE_CHANNELS, CALIBRATION_PARAMS, UV, RAY_ORIGIN, \
     RAY_DIRECTION
 from .contracts import WindowSample
 
@@ -27,8 +27,12 @@ RIG_FRAME_POSITION_STD = .1
 # read_clip's arrays that make_sample uses; the cache (cached_clip) keeps only these.
 SAMPLE_ARRAYS = ('event_features', 'event_valid', 'event_camera', 'event_capture', 'event_arrival', 'target_xyz',
                  'target_mask', 'query_time', 'window_starts', 'calibration_target', 'rig_target',
-                 'rig_calibration_target')
-CACHE_VERSION = 1   # bump when read_clip's output changes
+                 'rig_calibration_target', 'hand_in_view')
+# bump when read_clip's output changes (2: undetected joints' features zeroed; 3: hand_in_view)
+CACHE_VERSION = 3
+# A hand is in view when at least this share of its joints with a target project inside some
+# camera's image (hands_in_view); otherwise it is outside all three cameras.
+IN_VIEW_FRACTION = .5
 
 
 def read_manifest(root):
@@ -138,6 +142,59 @@ def to_rig_frame(target, calibration, data, frame):
     return (scale*target@rotation.T+shift).astype(np.float32), moved.astype(np.float32)
 
 
+def pixel_model(features, mask, nominal_rotations):
+    """Each camera's pinhole pixel mapping fitted from the clip's detections: u = a_u x + b_u and
+    v = a_v y + b_v, (x, y) the ray's normalised camera coordinates (camera frame = the nominal
+    rotation applied to the ray direction, since rays = pixel @ R). features [T,3,2,21,14], mask
+    [T,3,2,21] -> coefficients [3,2,2] (camera; u, v; slope, offset) and the fit's RMS residual
+    [3] (image units, [0,1]); NaN for a camera with fewer than 10 usable detections."""
+    rotations = np.asarray(nominal_rotations, np.float64)
+    coefficients, rms = np.full((NUM_CAMERAS, 2, 2), np.nan), np.full(NUM_CAMERAS, np.nan)
+    for camera in range(NUM_CAMERAS):
+        seen = features[:, camera][mask[:, camera].astype(bool)].astype(np.float64)       # [n,14]
+        c = seen[:, RAY_DIRECTION]@rotations[camera].T                                      # camera frame
+        front = c[:, 2] > 1e-9
+        if front.sum() < 10:
+            continue
+        xy, uv = c[front, :2]/c[front, 2:], seen[front][:, UV]
+        residuals = []
+        for axis in range(2):
+            design = np.stack((xy[:, axis], np.ones(len(xy))), -1)
+            coefficients[camera, axis] = np.linalg.lstsq(design, uv[:, axis], rcond=None)[0]
+            residuals.append(uv[:, axis]-design@coefficients[camera, axis])
+        rms[camera] = float(np.sqrt(np.mean(np.square(residuals))))
+    return coefficients, rms
+
+
+def hands_in_view(clip, data, fraction=IN_VIEW_FRACTION):
+    """Per query time and hand [T,2]: whether the hand is in some camera's view, i.e. at least
+    `fraction` of its joints with a target project inside that camera's image ([0,1]^2, in front
+    of it) through the true camera pose (actual rotation and origin, world-frame targets) and the
+    pixel mapping fitted from the detections (pixel_model). A hand outside all three cameras still
+    exists but nothing can see it. All True without the simulator's cameras (real captures) or a
+    usable fit; a camera without a fit (it detected nothing in the clip) vouches for no hand."""
+    everywhere = np.ones((len(clip['target_xyz']), NUM_HANDS), bool)
+    if not all(key in data for key in CALIBRATION_ARRAYS):
+        return everywhere
+    coefficients, _ = pixel_model(clip['features'], clip['input_mask'], data['nominal_rotations'])
+    if np.isnan(coefficients).all():
+        return everywhere
+    rotations, origins = np.asarray(data['actual_rotations'], np.float64), np.asarray(data['actual_origins'], np.float64)
+    target, valid = clip['target_xyz'].astype(np.float64), clip['target_mask'].astype(bool)
+    in_view = np.zeros_like(everywhere)
+    for camera in range(NUM_CAMERAS):
+        if np.isnan(coefficients[camera]).any():
+            continue
+        c = (target-origins[camera])@rotations[camera].T                                    # [T,2,21,3]
+        front = c[..., 2] > 1e-9
+        depth = np.where(front, c[..., 2], 1.)
+        u = coefficients[camera, 0, 0]*c[..., 0]/depth+coefficients[camera, 0, 1]
+        v = coefficients[camera, 1, 0]*c[..., 1]/depth+coefficients[camera, 1, 1]
+        inside = front & (u >= 0) & (u <= 1) & (v >= 0) & (v <= 1) & valid
+        in_view |= inside.sum(-1) >= fraction*np.maximum(valid.sum(-1), 1)
+    return in_view
+
+
 def read_clip(path):
     with np.load(path, allow_pickle=False) as data:
         clip = {key: data[key].copy() for key in CLIP_ARRAYS}
@@ -145,6 +202,7 @@ def read_clip(path):
         frame = rig_frame(data)
         clip['rig_target'], clip['rig_calibration_target'] = to_rig_frame(clip['target_xyz'], clip['calibration_target'],
                                                                            data, frame)
+        clip['hand_in_view'] = hands_in_view(clip, data)
         timing = {key: data[key].copy() for key in TIMING_ARRAYS}
         meta = json.loads(str(data['metadata']))
     clip['window'] = int(meta['config']['window'])
@@ -198,14 +256,18 @@ def clip_events(clip, timing):
     capture = timing['capture_time'][frame, camera].astype(np.float64)
     # Ties keep (query, camera) order; the model treats input order as arrival order.
     order = np.argsort(arrival, kind='stable')
-    return dict(event_features=clip['features'][frame, camera][order],
-                event_valid=clip['input_mask'][frame, camera][order],
+    # Undetected joints' features are zeroed once here, not in every window (make_sample).
+    features = clip['features'][frame, camera][order].astype(np.float32, copy=False)
+    valid = clip['input_mask'][frame, camera][order].astype(bool, copy=False)
+    features[~valid] = 0
+    return dict(event_features=features, event_valid=valid,
                 event_camera=camera[order].astype(np.int64), event_capture=capture[order],
                 event_arrival=arrival[order])
 
 
 def make_sample(clip, window_index, context_s=None, max_events=SamplingConfig.max_events,
-                target_frame=SamplingConfig.target_frame, queries=0, seen_span_s=None) -> WindowSample:
+                target_frame=SamplingConfig.target_frame, queries=0,
+                mask_out_of_view=SamplingConfig.mask_out_of_view) -> WindowSample:
     """Time-based window: the events arrived by the window's last query and captured at most
     context_s before its first query, and the window's query times with their targets.
 
@@ -214,54 +276,61 @@ def make_sample(clip, window_index, context_s=None, max_events=SamplingConfig.ma
     rig_frame; a clip without the simulator rig has no rig-wide error to remove);
     target_world always in the world frame. queries > 0 keeps only the window's last
     queries (the evaluated last query included) and the events their history needs.
-    With seen_span_s (the model's event_span_s), a hand no event captured within it before a
-    query (and arrived by it) detected has no target there: nothing in the input shows it.
+    hand_in_view [Q,2] says whether each hand is inside some camera's view (hands_in_view, from
+    the true geometry); with mask_out_of_view a hand outside all three cameras has no position
+    targets (it exists, but nothing can see where): the model learns that it is out of view.
+    A hand in view but not detected keeps its targets.
     """
     if target_frame not in TARGET_FRAMES:
         raise ValueError(f'target_frame must be one of {TARGET_FRAMES}')
     if context_s is None:
-        context_s = LiteConfig().context_s
+        context_s = LiteV3Config().context_s
     end = int(clip['window_starts'][window_index])+clip['window']
     if queries < 0 or queries > clip['window']:
         raise ValueError(f"queries must be in [0, {clip['window']}]")
     start = end-queries if queries else end-clip['window']
     query = clip['query_time'][start:end].astype(np.float64)
-    last = query[-1]
+    last, first = query[-1], query[0]-context_s
     arrival, capture = clip['event_arrival'], clip['event_capture']
-    chosen = np.nonzero((arrival <= last+1e-9) & (capture >= query[0]-context_s))[0][-max_events:]
+    # Events are sorted by arrival and none is captured after it arrives, so every candidate
+    # arrived between the history start and the last query: a slice found by binary search
+    # instead of a scan of the whole clip (checked once per clip; otherwise the whole clip).
+    if '_causal' not in clip:
+        clip['_causal'] = bool(np.all(capture <= arrival+1e-9))
+    lo = np.searchsorted(arrival, first, 'left') if clip['_causal'] else 0
+    hi = np.searchsorted(arrival, last+1e-9, 'right')
+    chosen = (lo+np.nonzero(capture[lo:hi] >= first)[0])[-max_events:]
     n = len(chosen)
     features = np.zeros((max_events, NUM_HANDS, NUM_JOINTS, FEATURE_CHANNELS), np.float32)
     valid = np.zeros((max_events, NUM_HANDS, NUM_JOINTS), bool)
     camera = np.zeros(max_events, np.int64)
     present = np.zeros(max_events, bool)
-    event_capture = np.zeros(max_events)
-    event_arrival = np.zeros(max_events)
-    features[:n] = clip['event_features'][chosen]
+    event_capture = np.zeros(max_events, np.float32)
+    event_arrival = np.zeros(max_events, np.float32)
+    features[:n] = clip['event_features'][chosen]          # undetected joints already zeroed (clip_events)
     valid[:n] = clip['event_valid'][chosen]
     camera[:n] = clip['event_camera'][chosen]
     present[:n] = True
     event_capture[:n] = capture[chosen]-last
     event_arrival[:n] = arrival[chosen]-last
-    target_mask = clip['target_mask'][start:end].copy()
-    if seen_span_s is not None:
-        times = (query-last)[:, None]
-        usable = (event_arrival[None, :n] <= times+1e-9) & (event_capture[None, :n] >= times-seen_span_s)
-        seen = (usable[..., None] & valid[None, :n].any(-1)).any(1)          # [queries, hands]
-        target_mask &= seen[..., None]
-    world = clip['target_xyz'][start:end].copy()
-    if target_frame == 'rig' and 'rig_target' in clip:
-        target, calibration = clip['rig_target'][start:end].copy(), clip['rig_calibration_target'].copy()
-    else:
-        target, calibration = world.copy(), clip['calibration_target'].copy()
-    features[~valid] = 0
-    if np.any(event_arrival[present] > 1e-6):
+    if n and event_arrival[:n].max() > 1e-6:
         raise ValueError('Future arrival in historical input')
-    as_float = lambda value: torch.from_numpy(value.astype(np.float32))
+    if target_frame == 'rig' and 'rig_target' in clip:
+        target, calibration = clip['rig_target'][start:end], clip['rig_calibration_target']
+    else:
+        target, calibration = clip['target_xyz'][start:end], clip['calibration_target']
+    target_mask = clip['target_mask'][start:end].astype(bool)
+    in_view = (clip['hand_in_view'][start:end].astype(bool) if 'hand_in_view' in clip
+               else np.ones((end-start, NUM_HANDS), bool))
+    if mask_out_of_view:
+        target_mask = target_mask & in_view[..., None]
+    as_float = lambda value: torch.from_numpy(np.array(value, dtype=np.float32))   # one copy
     return WindowSample(event_features=torch.from_numpy(features), event_valid=torch.from_numpy(valid),
                         event_camera=torch.from_numpy(camera), event_present=torch.from_numpy(present),
-                        event_capture=as_float(event_capture), event_arrival=as_float(event_arrival),
-                        query_times=as_float(query-last), target=as_float(target), target_world=as_float(world),
-                        target_mask=torch.from_numpy(target_mask),
+                        event_capture=torch.from_numpy(event_capture), event_arrival=torch.from_numpy(event_arrival),
+                        query_times=as_float(query-last), target=as_float(target),
+                        target_world=as_float(clip['target_xyz'][start:end]),
+                        target_mask=torch.from_numpy(target_mask), hand_in_view=torch.from_numpy(in_view.copy()),
                         calibration_target=as_float(calibration),
                         world_unit_cm=torch.tensor(clip['world_unit_cm'], dtype=torch.float32))
 
@@ -285,10 +354,10 @@ class HandWindows(IterableDataset):
     fixed, so its world coordinates are worth learning."""
 
     def __init__(self, root, split, windows_per_clip=16, seed=42, max_clips=0, context_s=None, max_events=SamplingConfig.max_events, target_frame=SamplingConfig.target_frame,
-                 queries=0, cache=None, seen_span_s=None):
+                 queries=0, cache=None, mask_out_of_view=SamplingConfig.mask_out_of_view):
         super().__init__()
         if context_s is None:
-            context_s = LiteConfig().context_s
+            context_s = LiteV3Config().context_s
         if (split not in SPLITS or windows_per_clip < 0 or max_clips < 0 or context_s < 0 or max_events < 1
                 or target_frame not in TARGET_FRAMES or queries < 0):
             raise ValueError('Invalid sampling settings')
@@ -301,7 +370,7 @@ class HandWindows(IterableDataset):
         self.split, self.windows_per_clip, self.seed, self.epoch = split, windows_per_clip, seed, 0
         self.context_s, self.max_events, self.target_frame, self.queries = context_s, max_events, target_frame, queries
         self.cache = cache   # folder for cached_clip; None reads the NPZ every time
-        self.seen_span_s = seen_span_s   # see make_sample; None keeps every labelled hand
+        self.mask_out_of_view = mask_out_of_view   # make_sample: no position targets for hands outside all cameras
 
     def _windows(self, count):
         return min(count, self.windows_per_clip) if self.windows_per_clip else count
@@ -330,9 +399,9 @@ class HandWindows(IterableDataset):
                 chosen = np.linspace(0, count-1, self._windows(count), dtype=int)
             for window in chosen:
                 sample = make_sample(clip, window, self.context_s, self.max_events, self.target_frame,
-                                     self.queries, self.seen_span_s)
-                # Event-less windows cannot constrain an observation-based estimator;
-                # metrics are reported on the final query, so it needs a target.
-                if not sample['event_present'].any() or not sample['target_mask'][-1].any():
+                                     self.queries, self.mask_out_of_view)
+                # Event-less windows cannot constrain an observation-based estimator. A window whose
+                # hands are both out of view at the final query still teaches that they are.
+                if not sample['event_present'].any():
                     continue
                 yield sample

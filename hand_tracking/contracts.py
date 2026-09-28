@@ -3,7 +3,7 @@
 Model times are float32 seconds relative to a nearby origin. Stream storage keeps
 absolute timestamps in float64. Shapes below include the batch dimension.
 """
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple, Optional, TypedDict
 from torch import Tensor
 
 MODEL_INPUT_KEYS = ('event_features', 'event_valid', 'event_camera', 'event_capture',
@@ -11,7 +11,7 @@ MODEL_INPUT_KEYS = ('event_features', 'event_valid', 'event_camera', 'event_capt
 
 
 # Supervision and unit conversion; never model inputs.
-TARGET_KEYS = ('target', 'target_world', 'target_mask', 'calibration_target', 'world_unit_cm')
+TARGET_KEYS = ('target', 'target_world', 'target_mask', 'hand_in_view', 'calibration_target', 'world_unit_cm')
 
 
 def model_inputs(batch):
@@ -30,8 +30,9 @@ class WindowSample(TypedDict):
     query_times: Tensor         # [Q]
     target: Tensor              # [Q,2,21,3] world units, in the sampling target_frame (rig or world)
     target_world: Tensor        # [Q,2,21,3] the same in the simulator's true world frame
-    target_mask: Tensor         # [Q,2,21]
-    calibration_target: Tensor  # [3,6] in the target frame, NaN when unknown (real captures)
+    target_mask: Tensor         # [Q,2,21] (off for a hand out of all cameras' view, SamplingConfig.mask_out_of_view)
+    hand_in_view: Tensor        # [Q,2] whether each hand is inside some camera's view (data.hands_in_view)
+    calibration_target: Tensor  # [3,6] in the target frame, NaN when unknown (not used by this model)
     world_unit_cm: Tensor       # []
 
 
@@ -57,8 +58,16 @@ class RawEvents(TypedDict):
 
 
 class ModelOutput(NamedTuple):
-    """model(..., return_details=True): calibration per query [B,Q,3,6] (None for a model
-    without camera correction); accepted marks the queries with at least one slot."""
-    pose: Tensor         # [B,Q,2,21,3] world units
-    calibration: Tensor  # [B,Q,3,6] camera correction (see geometry.apply_calibration)
-    accepted: Tensor     # [B,Q]
+    """model(..., return_details=True): calibration is None (no camera calibration head);
+    accepted marks the queries with any usable frame or slot; stages is None (one stage);
+    error each joint's own expected error, log(1 + mm) (None without the error head); anchored
+    how each joint was anchored (model.ANCHOR_KINDS index) and anchor_xyz its anchor; presence each
+    hand's logit of being inside some camera's view (None without the presence head)."""
+    pose: Tensor                             # [B,Q,2,21,3] world units
+    calibration: Optional[Tensor]            # None
+    accepted: Tensor                         # [B,Q]
+    stages: Optional[Tensor] = None          # None
+    error: Optional[Tensor] = None           # [B,Q,2,21] expected joint error, log(1 + mm)
+    anchored: Optional[Tensor] = None        # [B,Q,2,21] 0 none, 1 triangulated, 2 one ray at the prior point's depth, 3 the prior point
+    anchor_xyz: Optional[Tensor] = None      # [B,Q,2,21,3] world units, the anchor before the correction
+    presence: Optional[Tensor] = None        # [B,Q,2] logit: the hand is inside some camera's view

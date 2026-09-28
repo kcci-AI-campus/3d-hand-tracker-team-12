@@ -9,28 +9,18 @@
     decoder   42 joint queries attend to the fused tokens -> xyz                  [42, 3]
 
 No triangulation, anchor or camera correction: the networks learn how views and times
-combine. forward() computes exactly what DirectStream computes event by event.
+combine. forward() computes exactly what DirectStream computes event by event. Kept as the
+networks-only comparison for HandLiteV3 (hand_tracking.model), whose event encoder it shares.
 """
-from dataclasses import dataclass
 import torch
 from torch import nn
 from .config import DirectConfig
-from .constants import (NUM_CAMERAS, NUM_HANDS, NUM_JOINTS, HAND_JOINTS, FEATURE_CHANNELS, UV, RAY_ORIGIN,
-                        RAY_DIRECTION, DELAY, TIME_UNIT_S, MASK_OFF)
+from .constants import NUM_CAMERAS, NUM_HANDS, NUM_JOINTS, HAND_JOINTS, FEATURE_CHANNELS, TIME_UNIT_S, MASK_OFF
 from .contracts import ModelOutput
 from .events import _gather, make_events, relative_events, select_slots
-from .layers import Block, EventEncoder, key_bias
+from .layers import Block, EventEncoder
+from .networks import DIRECT_JOINT_FEATURES, DirectEncoded, camera_one_hot, direct_features, repeat_each
 from .stream import EventStream
-
-# Per joint: u,v (2), ray origin (3) and direction (3), delay (1), detected (1).
-DIRECT_JOINT_FEATURES = 10
-
-
-def direct_features(raw, valid):
-    """Event features [...,2,21,11] (invalid joints zeroed), valid -> encoder input [...,2,21,10]."""
-    x = torch.cat((raw[..., UV]*2-1, raw[..., RAY_ORIGIN], raw[..., RAY_DIRECTION], raw[..., DELAY]/TIME_UNIT_S,
-                   valid.float()[..., None]), -1)
-    return torch.where(valid[..., None], x, 0.)
 
 
 class Fusion(nn.Module):
@@ -84,18 +74,6 @@ class QueryNetwork(nn.Module):
         return self.decoder(self.fusion(tokens, valid, ages), valid)
 
 
-@dataclass
-class DirectEncoded:
-    """Per-event tokens [B,E,10,dim]; they never change after arrival."""
-    tokens: torch.Tensor
-
-    def map(self, fn):
-        return DirectEncoded(fn(self.tokens))
-
-    def append(self, other, dim=1):
-        return DirectEncoded(torch.cat((self.tokens, other.tokens), dim))
-
-
 class HandDirect(nn.Module):
     def __init__(self, config=None):
         super().__init__()
@@ -116,7 +94,7 @@ class HandDirect(nn.Module):
             targets = torch.arange(e, device=events['camera'].device)
         t = targets.numel()
         features = direct_features(events['raw'][:, targets], events['valid'][:, targets])
-        camera = nn.functional.one_hot(events['camera'][:, targets], NUM_CAMERAS).float()
+        camera = camera_one_hot(events['camera'][:, targets])
         tokens = self.encoder(features.reshape(b*t, NUM_HANDS, -1), camera.reshape(b*t, NUM_CAMERAS))
         return DirectEncoded(tokens.reshape(b, t, *tokens.shape[1:]))
 
@@ -127,10 +105,10 @@ class HandDirect(nn.Module):
         slot, valid = select_slots(events, query, self.config.slots_per_camera, self.config.event_span_s)
         take = lambda value: _gather(value, slot).reshape(n, s, *value.shape[2:])
         valid = valid.reshape(n, s)
-        token_valid = valid.repeat_interleave(per, -1)
+        token_valid = repeat_each(valid, per)
         tokens = torch.where(token_valid[..., None], take(encoded.tokens).reshape(n, per*s, -1), 0.)
         ages = torch.where(valid, ((query.reshape(n, 1)-take(events['capture']))/TIME_UNIT_S).clamp_min(0.), 0.)
-        pose = self.query_network(tokens, token_valid.to(tokens.dtype), ages.repeat_interleave(per, -1))
+        pose = self.query_network(tokens, token_valid.to(tokens.dtype), repeat_each(ages, per))
         return pose.float().reshape(b, q, NUM_HANDS, NUM_JOINTS, 3), None, valid.any(-1).reshape(b, q)
 
     def forward(self, event_features, event_valid, event_camera, event_capture, event_arrival, event_present,

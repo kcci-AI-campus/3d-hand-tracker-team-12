@@ -1,4 +1,4 @@
-"""Input layout, units and tolerances shared by data, geometry, model and stream."""
+"""Input layout, units and tolerances shared by data, model and stream."""
 
 NUM_CAMERAS = 3
 NUM_HANDS = 2
@@ -22,32 +22,21 @@ DELAY = slice(10, 11)          # capture->arrival delay, seconds
 
 # Learned features express times, ages and delays in this unit so they are O(1).
 TIME_UNIT_S = .1
-# Ray-to-point miss vectors are scaled to O(1) for the same reason.
+# Ray-to-point miss vectors and ray shifts (world units / unit directions) are scaled by this,
+# and angular residuals (radians) divided by RESIDUAL_UNIT (about 3 px of detector noise), to O(1).
 MISS_SCALE = 10.
-# Per-camera calibration: rotation vector (3) and centre shift (3).
+RESIDUAL_UNIT = .01
+# Per-camera calibration (the data's auxiliary target, unused by this model): rotation vector (3) and centre shift (3).
 CALIBRATION_PARAMS = 6
 
 # An event is available to a query when it arrived by the query time, up to float32
 # rounding of times relative to the batch origin.
 ARRIVAL_TOLERANCE_S = 1e-6
-# Distinct sample stamps are >=1/camera_fps/3 apart; float32 relative times differ by ~1e-7.
-REPEAT_TOLERANCE_S = 1e-5
-# Velocity needs samples spread over at least this time std; extrapolation is capped.
+# The triangulation input's line fit needs samples spread over at least this time std for a
+# slope (otherwise their mean), and two rays at least this far from parallel: sin^2 of the
+# widest angle between them; 2e-3 is about 2.6 degrees.
 MIN_TIME_STD_S = .005
-MAX_EXTRAPOLATION_S = .25
-# Triangulation needs two rays at least this far from parallel: sin^2 of the widest
-# angle between them; 2e-3 is about 2.6 degrees.
 MIN_RAY_SIN2 = 2e-3
-# A single-ray anchor keeps a reference point's depth along the ray, at least this far
-# in front of the camera (world units).
-MIN_RAY_DEPTH = 1e-3
-# Outlier ray test: a ray is rejected when its angular residual to the point of the other
-# rays exceeds the ratio times their own residual, floored at this many radians (about
-# 3 px of detector noise) so a perfectly consistent pair does not make every ray an outlier.
-RAY_RESIDUAL_FLOOR = .01
-# The outlier must stand out: its ratio this many times the next candidate's; otherwise
-# two rays are suspects and the sample is dropped as ambiguous.
-OUTLIER_MARGIN = 3.
 # Additive attention bias of an excluded key; finite so fp16 runtimes stay NaN-free.
 MASK_OFF = -1e4
 # Streams keep events this long beyond the model's context before pruning.

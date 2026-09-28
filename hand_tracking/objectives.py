@@ -1,4 +1,4 @@
-"""Training losses (pose, bone length, calibration auxiliary) and evaluation totals."""
+"""Training losses (pose, wrist-relative pose, bone length, calibration auxiliary) and evaluation totals."""
 from dataclasses import dataclass
 import math
 import torch
@@ -40,6 +40,26 @@ def pose_loss(prediction, target, target_mask, world_unit_cm, bone_weight=.1, be
     return position+bone_weight*bone
 
 
+def wrist_relative(joints, mask):
+    """Joints [...,21,3] and mask [...,21] -> each non-wrist joint minus its hand's wrist
+    [...,20,3] and where both have a target [...,20]."""
+    return joints[...,1:,:]-joints[...,:1,:], mask[...,1:] & mask[...,:1]
+
+
+def relative_loss(prediction, target, target_mask, world_unit_cm, beta_m=.006):
+    """Masked SmoothL1 of the joints relative to their wrist (the hand's shape), in meters.
+
+    The wrist position error cancels, so hand shape keeps its own training signal; used
+    beside pose_loss, which keeps the absolute position (and hands without a wrist target).
+    """
+    valid = target_mask.bool()
+    scale = (world_unit_cm/100).reshape(-1, *[1]*(prediction.ndim-1))
+    prediction, mask = wrist_relative(prediction.float()*scale, valid)
+    safe_target, _ = wrist_relative(torch.where(valid[...,None], target, 0.)*scale, valid)
+    joints = F.smooth_l1_loss(prediction, safe_target, beta=beta_m, reduction='none').mean(-1)
+    return (joints*mask).sum()/mask.sum().clamp_min(1)
+
+
 def error_totals(prediction, target, mask, world_unit_cm):
     """MPJPE numerator (mm), PCK@20mm numerator and valid joint count for [B,2,21,3]."""
     valid = mask.bool()
@@ -48,15 +68,35 @@ def error_totals(prediction, target, mask, world_unit_cm):
     return (mm*valid).sum(), ((mm<20)&valid).sum(), valid.sum()
 
 
+def relative_error_totals(prediction, target, mask, world_unit_cm):
+    """Wrist-relative MPJPE numerator (mm) and joint count for [B,2,21,3] (hand shape only)."""
+    valid = mask.bool()
+    prediction, relative_mask = wrist_relative(prediction, valid)
+    target, _ = wrist_relative(torch.where(valid[...,None], target, 0.), valid)
+    mm = (prediction-target).norm(dim=-1)*world_unit_cm[:,None,None]*10
+    return (mm*relative_mask).sum(), relative_mask.sum()
+
+
+def _number(value):
+    """A running total as a Python number; a device tensor is read (waited for) only here."""
+    return value.item() if isinstance(value, torch.Tensor) else value
+
+
 @dataclass
 class PoseTotals:
     """Running MPJPE and PCK@20mm over the final query of each window (the reported metric),
-    against the target frame's targets, and MPJPE against the world-frame targets."""
+    against the target frame's targets, MPJPE against the world-frame targets, and the
+    wrist-relative MPJPE (hand shape, wrist position error removed).
+
+    Totals stay device tensors between reads, so adding a batch never waits for the device
+    (under XLA, a read ends the traced step); mpjpe_mm and summary() read them."""
     error_mm: float = 0.
     correct: int = 0
     joints: int = 0
     samples: int = 0
     world_error_mm: float = 0.
+    relative_error_mm: float = 0.
+    relative_joints: int = 0
 
     def add(self, pose, batch):
         """pose [B,Q,2,21,3] against a batch's target/target_mask/world_unit_cm."""
@@ -65,33 +105,43 @@ class PoseTotals:
                                                   batch['target_mask'][:,-1], batch['world_unit_cm'])
             world, _, _ = error_totals(pose[:,-1].float(), batch['target_world'][:,-1], batch['target_mask'][:,-1],
                                        batch['world_unit_cm'])
-        self.error_mm += error.item()
-        self.world_error_mm += world.item()
-        self.correct += correct.item()
-        self.joints += joints.item()
+            relative, relative_joints = relative_error_totals(pose[:,-1].float(), batch['target'][:,-1],
+                                                              batch['target_mask'][:,-1], batch['world_unit_cm'])
+        self.error_mm = self.error_mm+error
+        self.world_error_mm = self.world_error_mm+world
+        self.relative_error_mm = self.relative_error_mm+relative
+        self.relative_joints = self.relative_joints+relative_joints
+        self.correct = self.correct+correct
+        self.joints = self.joints+joints
         self.samples += len(pose)
 
     @property
     def mpjpe_mm(self):
-        return self.error_mm/self.joints if self.joints else float('nan')
+        joints = _number(self.joints)
+        return _number(self.error_mm)/joints if joints else float('nan')
 
     def summary(self):
-        if not self.joints:
+        joints, relative_joints = int(_number(self.joints)), int(_number(self.relative_joints))
+        if not joints:
             raise ValueError('No valid observations/targets in this loader')
-        return dict(mpjpe_mm=self.mpjpe_mm, pck20=self.correct/self.joints, mpjpe_world_mm=self.world_error_mm/self.joints,
-                    samples=self.samples, joints=self.joints)
+        relative = _number(self.relative_error_mm)/relative_joints if relative_joints else float('nan')
+        return dict(mpjpe_mm=_number(self.error_mm)/joints, pck20=_number(self.correct)/joints,
+                    mpjpe_world_mm=_number(self.world_error_mm)/joints, mpjpe_rel_mm=relative,
+                    samples=self.samples, joints=joints)
 
 
 @dataclass
 class WeightedMean:
+    """Weighted running mean; value/weight may be device tensors, read only by mean."""
     total: float = 0.
     weight: float = 0.
 
     def add(self, value, weight):
-        self.total += value*weight
-        self.weight += weight
+        self.total = self.total+value*weight
+        self.weight = self.weight+weight
 
     @property
     def mean(self):
         """None when nothing was weighted (e.g. no known calibration target)."""
-        return self.total/self.weight if self.weight else None
+        weight = _number(self.weight)
+        return _number(self.total)/weight if weight else None

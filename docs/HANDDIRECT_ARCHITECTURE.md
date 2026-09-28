@@ -1,10 +1,10 @@
 # HandDirect 구조
 
-HandDirect는 비동기로 도착하는 카메라 3대의 2D 손 관절을 받아, 원하는 시각의 두 손 3D 관절 42개를 **신경망만으로 직접** 출력하는 기본 모델입니다(`--arch direct`). 삼각측량, anchor, 카메라 보정, 이상치 필터 같은 기하 규칙이 없습니다. 여러 카메라를 합치는 법과 시간에 따른 움직임은 모두 학습으로 배웁니다.
+HandDirect는 비동기로 도착하는 카메라 3대의 2D 손 관절을 받아, 원하는 시각의 두 손 3D 관절 42개를 **신경망만으로 직접** 출력하는 비교용 모델입니다(`--arch direct`; 기본 모델은 HandLiteV3). 삼각측량, anchor, 카메라 보정, 이상치 필터 같은 기하 규칙이 없습니다. 여러 카메라를 합치는 법과 시간에 따른 움직임은 모두 학습으로 배웁니다.
 
 - 코드: [`hand_tracking/direct.py`](../hand_tracking/direct.py), 공통 부품 [`layers.py`](../hand_tracking/layers.py), 설정 `DirectConfig`([`config.py`](../hand_tracking/config.py))
 - 두 모델 비교와 학습·배포 명령: [MODELS.md](MODELS.md)
-- 비교용 모델: [HANDLITE_ARCHITECTURE.md](HANDLITE_ARCHITECTURE.md)
+- 기본 모델: [HANDLITEV3_ARCHITECTURE.md](HANDLITEV3_ARCHITECTURE.md)
 
 ## 0. 전체 흐름
 
@@ -83,19 +83,19 @@ encoder가 쓰는 관절당 특징 10개(`direct_features`):
 - **증강 없음**: 카메라 배치가 고정이므로 그 배치의 월드 좌표를 그대로 배웁니다.
 - **정답 좌표계**: rig(카메라 영상으로 알 수 없는 rig 전체 어긋남을 뺀 좌표). 참 월드 좌표 손실을 0.1배로 더합니다.
 - **손실**: 관절 위치 SmoothL1(β = 6mm) + 0.1 × 뼈 길이 오차.
-- **권장 설정(모두 기본값)**: 60 epoch, 배치 64, `--train-queries 4`, lr 6e-4, AdamW, cosine, gradient clip 1, CUDA에서 mixed precision.
+- **설정**: 기본값은 HandLiteV3와 같은 TPU 설정(85 epoch, 배치 128, lr 8.5e-4, `--train-queries 4`)입니다. 이전 GPU 실행은 60 epoch, 배치 64, lr 6e-4를 썼습니다. AdamW, cosine, gradient clip 1, CUDA에서 mixed precision.
 - 처음부터 좌표를 배우므로 초반 오차가 큽니다. CPU 150배치 뒤 학습 오차 약 122mm(누적 평균)입니다.
 
 ## 6. 배포
 
-`python -m training.export`가 신경망 두 개를 ONNX·ncnn으로 내보냅니다(`hand_tracking/direct_export.py`).
+`python -m training.export`가 신경망 두 개를 ncnn으로 내보냅니다(pnnx 변환, `hand_tracking/direct_export.py`).
 
 | 그래프 | 입력 | 출력 |
 |---|---|---|
 | `encoder` | 특징 [2, 210], 카메라 one-hot [3] | 토큰 [10, 64] |
 | `query` | 토큰 [240, 64], 유효 [240], 나이 [240] | 관절 [42, 3] |
 
-NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encoder를 한 번 돌려 토큰을 저장하고, query 때 슬롯을 골라 query 그래프를 돌립니다. 배치 `forward()`, `DirectStream`, 런타임(ONNX Runtime·ncnn)이 같은 값을 내는 것을 테스트로 확인했습니다. C++ 런타임은 아직 없습니다.
+NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encoder를 한 번 돌려 토큰을 저장하고, query 때 슬롯을 골라 query 그래프를 돌립니다. 배치 `forward()`, `DirectStream`, 런타임(ncnn)이 같은 값을 내는 것을 테스트로 확인했습니다. C++ 런타임은 아직 없습니다.
 
 ## 7. 수치 요약
 
@@ -125,7 +125,7 @@ NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encode
 
 ## 9. 알려진 한계
 
-- **본학습 결과 없음**: HandLite와의 정확도 비교는 아직입니다.
+- **본학습 결과 없음**: fusion 1 GPU 실행이 6 epoch에 val 41.9mm였습니다. HandLiteV3(85 epoch, 20.4mm)와 같은 조건의 비교는 아직입니다.
 - **카메라 1대만 보는 손**: 데이터의 약 16%입니다. 깊이 정보가 약해서 신경망이 이 경우를 얼마나 배우는지가 관건입니다.
 - **rig 전체 어긋남**: 대충 놓은 배치의 전체 회전·이동·크기 차이는 알 수 없어, 출력은 "정해 둔 배치 기준" 좌표입니다.
 - **실시간 연결 없음**: 실제 카메라(MediaPipe) 입력을 이 특징으로 바꾸는 단계와 C++ 런타임이 아직 없습니다.
