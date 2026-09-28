@@ -31,8 +31,14 @@ def moving_events(seconds=1.2, rate=17.1, seed=0):
 
 
 def with_outputs(model, std=.1):
-    """The output layer starts small; give it weight so outputs depend on every input."""
-    torch.nn.init.normal_(model.query_network.decoder.output[-1].weight, std=std)
+    """Give the decoder's output layers weight (the refinement heads and pose embedding start at
+    zero, the first head small), so outputs depend on every input and every stage."""
+    decoder = model.query_network.decoder
+    for layer in decoder.modules():
+        if isinstance(layer, torch.nn.Linear) and layer.out_features == 3:               # every pose head
+            torch.nn.init.normal_(layer.weight, std=std)
+    if decoder.refine:
+        torch.nn.init.normal_(decoder.pose_embedding[-1].weight, std=std)
     return model.eval()
 
 
@@ -84,6 +90,44 @@ class DirectModelTests(unittest.TestCase):
                 torch.testing.assert_close(stream.query(epoch+time), expected, atol=1e-5, rtol=1e-5)
         self.assertLess(len(stream), inputs[0].shape[1])                    # old events pruned
         self.assertFalse(stream.push(0, inputs[0][0,0], inputs[1][0,0], epoch-5., epoch+1.))   # stale capture
+
+
+class WristRefineTests(unittest.TestCase):
+    def test_stages_are_supervised_and_the_last_is_the_pose(self):
+        model = with_outputs(HandDirect(direct(blocks=3)))
+        inputs = moving_events()
+        with torch.no_grad():
+            output = model(*inputs, inputs[4][:, -2:], return_details=True)
+        self.assertEqual(tuple(output.stages.shape), (2, 1, 2, 2, 21, 3))          # blocks-1 earlier stages
+        batch = dict(target=output.pose.detach()+.01, target_mask=torch.ones(1, 2, 2, 21, dtype=torch.bool),
+                     world_unit_cm=torch.full((1,), 40.))
+        from hand_tracking.engine import batch_loss
+        final_only = batch_loss(batch, output, .1)
+        with_stages = batch_loss(batch, output, .1, stage_weight=.5)
+        self.assertGreater(float(with_stages), float(final_only))
+
+    def test_wrists_absolute_and_joints_relative(self):
+        """The joint head's output moves each hand's 20 joints with its wrist: shifting the wrist
+        head's bias shifts the whole hand, not only the wrist."""
+        model = HandDirect(direct(refine=False)).eval()
+        inputs = moving_events()
+        with torch.no_grad():
+            before = model(*inputs, inputs[4][:, -1:])
+            model.query_network.decoder.output.wrist[-1].bias += torch.tensor([.1, 0., 0.])
+            after = model(*inputs, inputs[4][:, -1:])
+        torch.testing.assert_close(after-before, torch.tensor([.1, 0., 0.]).expand_as(after), atol=1e-5, rtol=0)
+
+    def test_older_checkpoints_load_as_the_original_decoder(self):
+        """A config saved before wrist_relative/refine existed builds the original single-head
+        decoder with its parameter names."""
+        from dataclasses import asdict
+        from hand_tracking.config import saved_config
+        values = {k: v for k, v in asdict(direct()).items() if k not in ('wrist_relative', 'refine')}
+        config = saved_config(values, 'direct')
+        self.assertFalse(config.wrist_relative or config.refine)
+        names = set(HandDirect(config).state_dict())
+        self.assertIn('query_network.decoder.output.3.weight', names)
+        self.assertFalse(any('.heads.' in name or 'pose_embedding' in name for name in names))
 
 
 class TorchGraphs:

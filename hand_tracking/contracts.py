@@ -59,14 +59,15 @@ class RawEvents(TypedDict):
 
 class ModelOutput(NamedTuple):
     """model(..., return_details=True): calibration is None (no camera calibration head);
-    accepted marks the queries with any usable frame or slot; stages is None (one stage);
+    accepted marks the queries with any usable frame or slot; stages holds HandDirect's earlier
+    coarse-to-fine poses (None for a single-stage model);
     error each joint's own expected error, log(1 + mm) (None without the error head); anchored
     how each joint was anchored (model.ANCHOR_KINDS index) and anchor_xyz its anchor; presence each
     hand's logit of being inside some camera's view (None without the presence head)."""
     pose: Tensor                             # [B,Q,2,21,3] world units
     calibration: Optional[Tensor]            # None
     accepted: Tensor                         # [B,Q]
-    stages: Optional[Tensor] = None          # None
+    stages: Optional[Tensor] = None          # [S-1,B,Q,2,21,3] world units, coarse first (HandDirect refine)
     error: Optional[Tensor] = None           # [B,Q,2,21] expected joint error, log(1 + mm)
     anchored: Optional[Tensor] = None        # [B,Q,2,21] 0 none, 1 triangulated, 2 one ray at the prior point's depth, 3 the prior point
     anchor_xyz: Optional[Tensor] = None      # [B,Q,2,21,3] world units, the anchor before the correction

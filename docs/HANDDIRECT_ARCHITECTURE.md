@@ -65,11 +65,14 @@ encoder가 쓰는 관절당 특징 10개(`direct_features`):
 - self-attention 블록(`fusion_blocks`, 기본 2개)으로 토큰끼리 정보를 주고받습니다. 여기서 같은 손가락의 다른 카메라 토큰, 같은 카메라의 이전 토큰이 섞입니다.
 - 블록 = pre-norm self-attention(head 4) + FFN(64 → 128 → 64). 빈 슬롯은 attention 점수 −1e4로 가려지고 출력도 0으로 유지됩니다.
 
-### 3-3. Decoder (107,971 파라미터)
+### 3-3. Decoder (125,836 파라미터, 손목 분해 + 단계적 보정)
 - **query**: 학습된 관절 임베딩 42개(손 2 × 관절 21).
 - **key/value**: fusion을 거친 토큰 240개 + null 토큰 1개. 슬롯이 하나도 없으면 null 토큰만 봅니다.
 - 블록 2개(`blocks`), 각 블록은 cross-attention(관절 → 토큰), self-attention(관절끼리), FFN 순입니다. pre-norm, head 4.
-- 출력: LayerNorm → 64 → GELU → 3. 관절마다 **3D 좌표를 직접** 냅니다(잔차가 아님).
+- **손목 기준 분해**(`wrist_relative`, 기본 켬): 손목 head가 두 손목의 절대 좌표를, 관절 head가 나머지 20관절의 **손목 기준 상대 좌표**를 냅니다. 손 위치(수십 cm)와 손 모양(mm~cm)이 한 출력 스케일을 나눠 쓰지 않게 합니다. 두 head는 모든 토큰에 돌고 상수 마스크로 고른 뒤, 상수 행렬곱으로 절대 좌표로 합칩니다(ncnn에 Gather 없음).
+- **단계적 보정**(`refine`, 기본 켬): 블록마다 pose를 냅니다. 두 번째 블록부터는 이전 pose를 임베딩(0 초기화)해 토큰에 더하고, 그 블록의 head(0 초기화)는 보정값만 냅니다. 중간 단계 pose(`ModelOutput.stages`)에도 손실을 겁니다(`--stage-weight`, 기본 0.5).
+- 두 옵션을 모두 끄면 예전 HandDirect(head 하나, 좌표 직접 출력)와 같고 파라미터 이름도 같습니다. 두 필드가 없는 예전 체크포인트는 끈 상태로 불러옵니다(`config.LEGACY_OPTIONS`).
+- 출력: 관절마다 **3D 좌표**(절대 좌표). 내보낸 그래프는 최종 pose만 냅니다.
 
 ## 4. 출력
 
@@ -101,7 +104,7 @@ NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encode
 
 | 항목 | 값 |
 |---|---|
-| 파라미터 | 184,227 (encoder 8,192 · fusion 68,064 · decoder 107,971) |
+| 파라미터 | 202,092 (encoder 8,192 · fusion 68,064 · decoder 125,836) |
 | 폭 / head / fusion 블록 / decoder 블록 | 64 / 4 / 2 / 2 |
 | query당 입력 | 토큰 240 × 64 |
 | attention 크기 | fusion 240 × 240, decoder 블록당 42 × 241 |
@@ -125,7 +128,7 @@ NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encode
 
 ## 9. 알려진 한계
 
-- **본학습 결과 없음**: fusion 1 GPU 실행이 6 epoch에 val 41.9mm였습니다. HandLiteV3(85 epoch, 20.4mm)와 같은 조건의 비교는 아직입니다.
+- **본학습 결과**: HandDirect-wrist(손목 분해 + 단계적 보정, fusion 2)가 GPU 60 epoch에 best val 22.8mm입니다(노트북 `gigahands_colab_wrist_refine.ipynb`, 시야 밖 손 포함). 같은 검증 창·관절에서 HandLiteV3(85 epoch, 20.4mm)보다 짧은 클립은 약 2.3mm 뒤지고, 창 300개 이상 장편 클립에서는 0.7mm 차이입니다. 이전 fusion 1 GPU 실행은 6 epoch에 41.9mm였습니다.
 - **카메라 1대만 보는 손**: 데이터의 약 16%입니다. 깊이 정보가 약해서 신경망이 이 경우를 얼마나 배우는지가 관건입니다.
 - **rig 전체 어긋남**: 대충 놓은 배치의 전체 회전·이동·크기 차이는 알 수 없어, 출력은 "정해 둔 배치 기준" 좌표입니다.
 - **실시간 연결 없음**: 실제 카메라(MediaPipe) 입력을 이 특징으로 바꾸는 단계와 C++ 런타임이 아직 없습니다.

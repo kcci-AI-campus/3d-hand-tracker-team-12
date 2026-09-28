@@ -121,22 +121,22 @@ python hand_tracker_master/tools/fake_slaves.py --master 192.168.0.10
 | `packets` | H3D1·UV2 바이트 배치와 왕복 | 통과 |
 | `model_smoke` | `--check-model` | 통과, query 3.1ms (PC) |
 
-- 기준 데이터는 `tools/make_golden.py`가 만듭니다. 그 안의 Python 기준 런타임은 모델을 학습한 노트북(`gigahands_colab_wrist_refine.ipynb`)의 `DirectRuntime`과 같은 값을 냅니다(차이 0, ncnn 같은 설정).
+- 기준 데이터는 `tools/make_golden.py`가 만듭니다. 그 안의 Python 기준 런타임은 모델을 학습한 노트북(`gigahands_colab_wrist_refine.ipynb`)과 저장소의 `DirectRuntime`과 같은 값을 냅니다(차이 0, ncnn 같은 설정).
 - PC에서 가짜 slave 2대 + 마스터(`--image`) + `pc_receiver.py`로 전체 경로를 돌려, 출력 약 10.7fps·손실 0을 확인했습니다.
 - **실제 파이 ARM 빌드·카메라·장치 간 통신은 아직 검증하지 않았습니다.** ARM에서 fp16을 쓰면 좌표가 최대 0.8mm(2e-3 단위) 정도 달라질 수 있습니다(`--no-fp16`으로 끔).
 
 ## 모델·배치 파일 다시 만들기 (개발 PC)
 
 ```bash
-# 1) 체크포인트를 ncnn으로: 모델을 학습한 노트북의 코드로 내보냅니다 (encoder/query + direct.json)
-python -m training.export --checkpoint checkpoints/hand_direct_wrist/last.pt --output hand_tracker_master/models/hand_direct_wrist --formats ncnn --check-input exports/gigahands_pi3_overlap/val/clip_00001.npz
+# 1) 체크포인트를 ncnn으로 (encoder/query + direct.json)
+python -m training.export --checkpoint checkpoints/hand_direct_wrist/last.pt --output hand_tracker_master/models/hand_direct_wrist --check-input exports/gigahands_pi3_overlap/val/clip_00001.npz
 # 2) 배치: 학습 데이터의 명목 배치
 python hand_tracker_master/tools/export_rig.py --data exports/gigahands_pi3_overlap
 # 3) C++ 테스트 기준 데이터
 python hand_tracker_master/tools/make_golden.py
 ```
 
-`training.export`는 새 폴더에만 쓰므로 기존 `models/hand_direct_wrist`를 지우고 실행하세요. 1번의 `training.export`는 HandDirect-wrist 코드가 있는 노트북 소스에서 실행해야 합니다(이 저장소의 `hand_tracking`에는 아직 wrist 구조가 없습니다). 그 노트북 코드의 ncnn 실행부에는 float64 입력 메모리 버그가 있으니, 내보내기 검사를 하기 전에 저장소 `hand_tracking/runtime.py`의 `NcnnGraphs.run`처럼 고쳐서 쓰세요. 모델 입출력 형식이 같으면 C++ 코드는 바꿀 필요가 없습니다.
+`training.export`는 새 폴더에만 쓰므로 기존 `models/hand_direct_wrist`를 지우고 실행하세요. 저장소의 HandDirect가 wrist 구조(`wrist_relative`, `refine`)를 지원하므로 저장소 코드로 내보내면 됩니다. 지금 들어 있는 그래프와 바이트 단위로 같게 나오는 것을 확인했습니다(2026-09-28). 모델 입출력 형식이 같으면 C++ 코드는 바꿀 필요가 없습니다.
 
 ## 코드 구성
 

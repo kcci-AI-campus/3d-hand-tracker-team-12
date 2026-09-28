@@ -11,13 +11,15 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import numpy as np
-from .config import DirectConfig
+from .config import saved_config
 from .constants import (NUM_CAMERAS, NUM_HANDS, NUM_JOINTS, MODEL_CHANNELS, UV, RAY_ORIGIN, RAY_DIRECTION, DELAY,
                         TIME_UNIT_S, STREAM_KEEP_MARGIN_S, check_event)
 from .runtime import NcnnGraphs, select_slot_events
 
 META_FILE = 'direct.json'
 EXPORT_FORMAT = 2   # 2: ncnn only (pnnx), graph input shapes in the metadata
+# 1: ONNX and/or ncnn (the HandDirect-wrist notebook's export); the ncnn graphs are the same.
+READABLE_FORMATS = (1, 2)
 GRAPHS = ('encoder', 'query')
 
 
@@ -41,9 +43,9 @@ class DirectRuntime:
         """graphs: any object with run(name, *arrays), instead of loading ncnn."""
         directory = Path(directory)
         meta = json.loads((directory/META_FILE).read_text(encoding='utf-8'))
-        if meta.get('architecture') != 'direct' or meta.get('export_format') != EXPORT_FORMAT:
-            raise ValueError(f'{directory} is not a HandDirect export of format {EXPORT_FORMAT}')
-        self.config = DirectConfig(**meta['config'])
+        if meta.get('architecture') != 'direct' or meta.get('export_format') not in READABLE_FORMATS:
+            raise ValueError(f'{directory} is not a HandDirect export of format {READABLE_FORMATS}')
+        self.config = saved_config(meta['config'], 'direct')
         self.graphs = graphs if graphs is not None else NcnnGraphs(directory, GRAPHS, threads, fp16)
         self.keep_s = self.config.context_s+STREAM_KEEP_MARGIN_S
         self.reset()

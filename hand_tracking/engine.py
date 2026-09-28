@@ -21,7 +21,15 @@ def joint_error_log(pose, batch):
     return torch.log1p(error), mask.float()
 
 
-def batch_loss(batch, output, bone_weight, relative_weight=0., error_weight=0., presence_weight=0.):
+def pose_objective(pose, batch, bone_weight, relative_weight):
+    """Pose loss of one pose [B,Q,2,21,3] plus relative_weight times its wrist-relative loss."""
+    loss = pose_loss(pose, batch['target'], batch['target_mask'], batch['world_unit_cm'], bone_weight)
+    if relative_weight:
+        loss = loss+relative_weight*relative_loss(pose, batch['target'], batch['target_mask'], batch['world_unit_cm'])
+    return loss
+
+
+def batch_loss(batch, output, bone_weight, relative_weight=0., error_weight=0., presence_weight=0., stage_weight=0.):
     """Pose loss in the target frame (the rig frame: the rig-wide error no observation reveals is
     not a target) over every query time, plus relative_weight times the wrist-relative loss (hand
     shape, free of the wrist position error), plus error_weight times the error estimate loss
@@ -29,10 +37,12 @@ def batch_loss(batch, output, bone_weight, relative_weight=0., error_weight=0., 
     target; the estimate's input is detached, so this never changes the pose), plus
     presence_weight times the in-view loss (binary cross-entropy of output.presence against
     hand_in_view, every hand; also on detached tokens). A hand out of all cameras' view has no
-    position targets (data.make_sample) and only teaches that it is out of view."""
-    loss = pose_loss(output.pose, batch['target'], batch['target_mask'], batch['world_unit_cm'], bone_weight)
-    if relative_weight:
-        loss = loss+relative_weight*relative_loss(output.pose, batch['target'], batch['target_mask'], batch['world_unit_cm'])
+    position targets (data.make_sample) and only teaches that it is out of view. stage_weight
+    adds each earlier coarse-to-fine stage's pose objective (HandDirect with refine)."""
+    loss = pose_objective(output.pose, batch, bone_weight, relative_weight)
+    if stage_weight and output.stages is not None:
+        for stage in output.stages:
+            loss = loss+stage_weight*pose_objective(stage, batch, bone_weight, relative_weight)
     if error_weight and output.error is not None:
         actual, mask = joint_error_log(output.pose, batch)
         misses = torch.nn.functional.smooth_l1_loss(output.error, actual, beta=.1, reduction='none')
@@ -73,11 +83,12 @@ def _check_finite(nonfinite, phase):
 
 
 def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_weight=.1, log_every=50,
-              relative_weight=0., error_weight=0., presence_weight=0.):
+              relative_weight=0., error_weight=0., presence_weight=0., stage_weight=0.):
     """One pass over loader; trains when an optimizer is given. Metrics use the final query:
     MPJPE and PCK, the error estimate's miss, and per anchor kind (ANCHOR_KINDS) the share of
     joints with a target, their MPJPE and their anchor's alone (what the correction starts from;
-    None for a model without an anchor, HandDirect).
+    None for a model without an anchor, HandDirect), and coarse_mpjpe_mm, the first
+    coarse-to-fine stage's MPJPE (None for a single-stage model).
 
     On XLA (TPU) batches keep their padded shape, float32 throughout, each batch ends with
     sync() and the device is read only every log_every batches and at the end (the first
@@ -86,7 +97,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_
     phase = 'train' if training else 'val'
     xla = is_xla(device)
     model.train(training)
-    pose, loss_mean, error_miss = PoseTotals(), WeightedMean(), WeightedMean()
+    pose, coarse, loss_mean, error_miss = PoseTotals(), PoseTotals(), WeightedMean(), WeightedMean()
     presence_hit, out_of_view = WeightedMean(), WeightedMean()   # final query, every hand
     kind_rate = {name: WeightedMean() for name in ANCHOR_KINDS}
     kind_mm = {name: WeightedMean() for name in ANCHOR_KINDS}
@@ -98,7 +109,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_
                      else contextlib.nullcontext())
         with torch.set_grad_enabled(training), precision:
             output = model(*model_inputs(batch), return_details=True)
-            loss = batch_loss(batch, output, bone_weight, relative_weight, error_weight, presence_weight)
+            loss = batch_loss(batch, output, bone_weight, relative_weight, error_weight, presence_weight, stage_weight)
         if xla:
             nonfinite = nonfinite+(~torch.isfinite(loss.detach())).int()
         elif not torch.isfinite(loss):
@@ -115,6 +126,8 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_
                     raise FloatingPointError(f'Non-finite gradients in {consecutive} consecutive steps '
                                              f'(grad scale {scaler.get_scale():.3g}): not an fp16 overflow')
         pose.add(output.pose, batch)
+        if output.stages is not None:
+            coarse.add(output.stages[0], batch)
         loss_mean.add(loss.detach().float(), len(output.pose))
         final = {key: batch[key][:, -1:] if key != 'world_unit_cm' else batch[key]
                  for key in ('target', 'target_mask', 'world_unit_cm')}
@@ -154,6 +167,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_
     summary = pose.summary()
     return dict(loss=loss_mean.mean, mpjpe_mm=summary['mpjpe_mm'], pck20=summary['pck20'],
                 mpjpe_world_mm=summary['mpjpe_world_mm'], mpjpe_rel_mm=summary['mpjpe_rel_mm'],
+                coarse_mpjpe_mm=coarse.summary()['mpjpe_mm'] if coarse.samples else None,
                 error_miss_mm=error_miss.mean, presence_accuracy=presence_hit.mean, out_of_view_rate=out_of_view.mean,
                 kind_rate={name: mean.mean for name, mean in kind_rate.items()},
                 kind_mpjpe_mm={name: mean.mean for name, mean in kind_mm.items()},

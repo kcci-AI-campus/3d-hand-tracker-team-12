@@ -41,7 +41,7 @@ def main(argv=None):
     options = checkpoint.saved['training_options']
     report = run_epoch(checkpoint.model, loader, device, bone_weight=options['bone_weight'],
                        relative_weight=options.get('relative_weight', 0.), error_weight=options.get('error_weight', 0.),
-                       presence_weight=options.get('presence_weight', 0.))
+                       presence_weight=options.get('presence_weight', 0.), stage_weight=options.get('stage_weight', 0.))
     report.update(checkpoint=str(Path(args.checkpoint).resolve()), split=args.split, windows_per_clip=args.windows_per_clip,
                   max_events=sampling.max_events, target_frame=sampling.target_frame,
                   evaluated_clips=len(dataset.rows), limited_clips=bool(args.max_clips))

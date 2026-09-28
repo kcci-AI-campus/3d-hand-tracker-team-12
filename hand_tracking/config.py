@@ -85,6 +85,10 @@ class DirectConfig:
     # event_span_s: a fixed-size input whatever the frame rate or number of events.
     slots_per_camera: int = _option(8, 'Most recent events per camera a query uses')
     event_span_s: float = _option(.5, 'Oldest event capture a query uses (s)')
+    # Decoder output: wrists absolute and the other joints relative to their wrist (separate
+    # heads), and/or a pose after every decoder block that the next block only corrects.
+    wrist_relative: bool = _option(True, 'Output each wrist absolute and the other joints relative to it')
+    refine: bool = _option(True, 'Coarse to fine: every decoder block outputs a pose, the next predicts its correction')
 
     def __post_init__(self):
         if (self.dim < 1 or self.heads < 1 or self.dim % self.heads or self.blocks < 1 or self.fusion_blocks < 0
@@ -106,6 +110,9 @@ class DirectConfig:
 # Checkpoint/export architecture names; HandLiteV3 is the default, HandDirect a networks-only comparison.
 ARCHITECTURES = {'litev3': LiteV3Config, 'direct': DirectConfig}
 DEFAULT_ARCHITECTURE = 'litev3'
+# Fields added after checkpoints/exports were written: their value for a saved config without
+# the field (the model it was built as), whatever the current default.
+LEGACY_OPTIONS = {'direct': dict(wrist_relative=False, refine=False)}
 
 
 def architecture_of(config):
@@ -114,10 +121,10 @@ def architecture_of(config):
 
 
 def saved_config(values, architecture=DEFAULT_ARCHITECTURE):
-    """Config of a saved checkpoint or export."""
+    """Config of a saved checkpoint or export, with LEGACY_OPTIONS for fields it predates."""
     if architecture not in ARCHITECTURES:
         raise ValueError(f'Unknown architecture {architecture!r}; choose from {sorted(ARCHITECTURES)}')
-    return ARCHITECTURES[architecture](**values)
+    return ARCHITECTURES[architecture](**{**LEGACY_OPTIONS.get(architecture, {}), **values})
 
 
 def _flag(name, default):
