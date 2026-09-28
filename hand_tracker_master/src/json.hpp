@@ -33,6 +33,13 @@ inline std::string string(const std::string& text, const std::string& key) {
     return text.substr(start + 1, end - start - 1);
 }
 
+inline bool boolean(const std::string& text, const std::string& key) {
+    const auto start = value_start(text, key);
+    if (text.compare(start, 4, "true") == 0) return true;
+    if (text.compare(start, 5, "false") == 0) return false;
+    throw std::runtime_error("JSON key " + key + " is not true/false");
+}
+
 // Every number inside the (possibly nested) array value of key, in order.
 inline std::vector<double> numbers(const std::string& text, const std::string& key) {
     auto at = value_start(text, key);

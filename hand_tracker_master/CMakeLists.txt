@@ -32,8 +32,8 @@ else()
   FetchContent_MakeAvailable(ncnn)
 endif()
 
-# HandDirect runtime, rig features and ncnn graphs (no OpenCV).
-add_library(master_core STATIC src/direct_runtime.cpp src/rig.cpp src/ncnn_graphs.cpp)
+# HandDirect and HandLiteV3 runtimes, rig features and ncnn graphs (no OpenCV).
+add_library(master_core STATIC src/direct_runtime.cpp src/litev3_runtime.cpp src/rig.cpp src/ncnn_graphs.cpp)
 target_include_directories(master_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(master_core PUBLIC ncnn)
 if(NOT MSVC)
@@ -67,6 +67,10 @@ add_executable(runtime_test tests/runtime_test.cpp)
 target_link_libraries(runtime_test PRIVATE master_core)
 add_test(NAME runtime_golden COMMAND runtime_test "${CMAKE_CURRENT_SOURCE_DIR}/models/hand_direct_wrist"
          "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/runtime_golden.txt")
+add_executable(litev3_test tests/litev3_test.cpp)
+target_link_libraries(litev3_test PRIVATE master_core)
+add_test(NAME litev3_golden COMMAND litev3_test "${CMAKE_CURRENT_SOURCE_DIR}/models/hand_litev3"
+         "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/litev3_golden.txt")
 add_executable(features_test tests/features_test.cpp)
 target_link_libraries(features_test PRIVATE master_core)
 add_test(NAME rig_features COMMAND features_test "${CMAKE_CURRENT_SOURCE_DIR}/models/rig.json"
@@ -79,4 +83,5 @@ endif()
 add_test(NAME packets COMMAND packet_test)
 if(MASTER_BUILD_APP)
   add_test(NAME model_smoke COMMAND hand_tracker_master --check-model)
+  add_test(NAME model_smoke_litev3 COMMAND hand_tracker_master --check-model --arch litev3)
 endif()

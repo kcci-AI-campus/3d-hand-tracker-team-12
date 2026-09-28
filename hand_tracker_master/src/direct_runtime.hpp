@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,22 @@ struct Config {
     int slots() const { return kCameras * slots_per_camera; }
 };
 
+// What the master app needs from a pose model's runtime (HandDirect: Runtime, HandLiteV3: LiteV3Runtime).
+class PoseRuntime {
+public:
+    virtual ~PoseRuntime() = default;
+    virtual bool push(int camera, const Features& features, const Valid& valid, double capture, double arrival) = 0;
+    virtual Pose query(double time) = 0;
+    virtual double last_arrival() const = 0;
+    virtual std::size_t size() const = 0;
+    // Per hand, after the last query: cameras whose frames in the query's slots detected at least
+    // 5 of that hand's joints (0: nothing shows the hand).
+    virtual const std::array<int, kHands>& seen_by_cameras() const = 0;
+    // Per hand, after the last query: the model's probability that the hand is inside some camera's
+    // view (models with a presence head only).
+    virtual std::optional<std::array<float, kHands>> in_view_probability() const { return std::nullopt; }
+};
+
 // direct.json of a HandDirect export (training.export): architecture "direct".
 Config load_config(const std::string& export_directory);
 
@@ -44,26 +61,26 @@ public:
                                      const std::vector<float>& ages) = 0;
 };
 
-class Runtime {
+class Runtime : public PoseRuntime {
 public:
     Runtime(Config config, std::shared_ptr<Graphs> graphs);
 
     // One arrived camera frame (absolute seconds). false (ignored) when its capture is no newer
     // than that camera's latest. Frames must be pushed in arrival order; frames without
     // detections count (they replace the camera's older frame in the slots).
-    bool push(int camera, const Features& features, const Valid& valid, double capture, double arrival);
+    bool push(int camera, const Features& features, const Valid& valid, double capture, double arrival) override;
 
     // Pose [2][21][3] at time (not before the latest arrival), world units.
-    Pose query(double time);
+    Pose query(double time) override;
 
     // Per hand, after the last query: how many cameras had a frame in the query's slots that
     // detected at least kSeenMinJoints of that hand's joints (0: nothing shows the hand, so its
     // joints are the network's guess).
     static constexpr int kSeenMinJoints = 5;
-    const std::array<int, kHands>& seen_by_cameras() const { return seen_; }
+    const std::array<int, kHands>& seen_by_cameras() const override { return seen_; }
 
-    std::size_t size() const { return events_.size(); }
-    double last_arrival() const { return last_arrival_; }
+    std::size_t size() const override { return events_.size(); }
+    double last_arrival() const override { return last_arrival_; }
     const Config& config() const { return config_; }
 
 private:

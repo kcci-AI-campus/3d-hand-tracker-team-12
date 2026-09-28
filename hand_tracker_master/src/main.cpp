@@ -1,7 +1,8 @@
-// Master Pi app: two slave Pis' UV2 packets + this Pi's own camera -> HandDirect -> 3D joints to the PC.
+// Master Pi app: two slave Pis' UV2 packets + this Pi's own camera -> HandDirect-wrist (default) or
+// HandLiteV3 (--arch litev3) -> 3D joints to the PC.
 //
 //   slave cam 0 --UV2/UDP--> receiver thread ┐
-//   slave cam 1 --UV2/UDP--> receiver thread ├─> inbox -> runtime thread: features, HandDirect push;
+//   slave cam 1 --UV2/UDP--> receiver thread ├─> inbox -> runtime thread: features, model push;
 //   own camera (cam 2) -> detector thread ───┘            on every own frame: query -> H3D1/UDP -> PC
 //
 // Times are this Pi's steady clock in seconds. A slave frame's capture time is its receive time
@@ -36,6 +37,7 @@
 #include "uv_sender.hpp"      // hand_tracker_slave: UV2 decode, CoordinatesFrom
 
 #include "direct_runtime.hpp"
+#include "litev3_runtime.hpp"
 #include "ncnn_graphs.hpp"
 #include "pc_packet.hpp"
 #include "rig.hpp"
@@ -57,7 +59,7 @@ struct Options {
     std::array<int, 2> slave_ports{{5001, 5002}};
     double net_latency_ms = 1.;
     fs::path models, model_dir, rig;
-    std::string pc, image;
+    std::string pc, image, arch = "direct";
     int pc_port = 6000;
     bool mirrored = false, fp16 = true, check = false;
 };
@@ -209,8 +211,20 @@ std::string Fixed(double value, int digits) {
     return text.str();
 }
 
-// Load the model and run it once on synthetic frames (no camera, no network).
-int Check(const Options& options, Runtime& runtime, const Rig& rig) {
+// The chosen model's runtime on its ncnn export.
+std::unique_ptr<PoseRuntime> MakeRuntime(const Options& options) {
+    const std::string dir = options.model_dir.u8string();
+    if (options.arch == "litev3") {
+        const LiteConfig config = load_lite_config(dir);
+        return std::make_unique<LiteV3Runtime>(config, std::make_shared<LiteNcnnGraphs>(dir, config, options.model_threads,
+                                                                                         options.fp16));
+    }
+    const Config config = load_config(dir);
+    return std::make_unique<Runtime>(config, std::make_shared<NcnnGraphs>(dir, config, options.model_threads, options.fp16));
+}
+
+// Load the models and run them once on synthetic frames (no camera, no network).
+int Check(const Options& options, PoseRuntime& runtime, const Rig& rig) {
     hand_detector::HandDetector(options.models, options.hands, options.threads).Check();
     uv_stream::Coordinates uv;
     for (int j = 0; j < 42; ++j) { uv[j * 2] = .4f + .005f * (j % 21); uv[j * 2 + 1] = .5f - .004f * (j % 21); }
@@ -225,7 +239,8 @@ int Check(const Options& options, Runtime& runtime, const Rig& rig) {
     const Pose pose = runtime.query(t);
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     for (float value : pose) Require(std::isfinite(value), "Non-finite model output");
-    std::cout << "Model OK: HandDirect query " << Fixed(ms, 1) << " ms, left wrist ("
+    std::cout << "Model OK: " << (options.arch == "litev3" ? "HandLiteV3" : "HandDirect") << " query " << Fixed(ms, 1)
+              << " ms, left wrist ("
               << Fixed(pose[0] * rig.world_unit_cm, 1) << ", " << Fixed(pose[1] * rig.world_unit_cm, 1) << ", "
               << Fixed(pose[2] * rig.world_unit_cm, 1) << ") cm\n";
     return 0;
@@ -234,9 +249,8 @@ int Check(const Options& options, Runtime& runtime, const Rig& rig) {
 int Run(const Options& options) {
     cv::setNumThreads(1);  // Avoid OpenCV and ncnn competing for CPU threads.
     const Rig rig = load_rig(options.rig.u8string());
-    const Config config = load_config(options.model_dir.u8string());
-    Runtime runtime(config, std::make_shared<NcnnGraphs>(options.model_dir.u8string(), config, options.model_threads,
-                                                         options.fp16));
+    const auto model = MakeRuntime(options);
+    PoseRuntime& runtime = *model;
     if (options.check) return Check(options, runtime, rig);
 
     udp::Socket pc;
@@ -251,7 +265,8 @@ int Run(const Options& options) {
                              std::ref(inbox), std::ref(stats[camera]), std::ref(failed));
     threads.emplace_back(RunOwnCamera, std::cref(options), std::ref(inbox), std::ref(stats[kOwnCamera]),
                          std::ref(infer_ms), std::ref(failed));
-    std::cout << "Slaves: cam0 UDP " << options.slave_ports[0] << ", cam1 UDP " << options.slave_ports[1]
+    std::cout << "Model: " << (options.arch == "litev3" ? "HandLiteV3" : "HandDirect-wrist") << " (" << options.model_dir.u8string()
+              << ")\nSlaves: cam0 UDP " << options.slave_ports[0] << ", cam1 UDP " << options.slave_ports[1]
               << "  ->  PC " << options.pc << ':' << options.pc_port << " (H3D1, " << pc::kPacketSize
               << " bytes)\nNo preview. Ctrl+C to exit.\n" << std::flush;
 
@@ -282,6 +297,10 @@ int Run(const Options& options) {
                 latency_ms = output.latency_ms;
                 const auto& seen = runtime.seen_by_cameras();
                 output.cameras_seen = {static_cast<std::uint8_t>(seen[0]), static_cast<std::uint8_t>(seen[1])};
+                if (const auto in_view = runtime.in_view_probability()) {
+                    output.has_in_view = true;
+                    output.in_view = *in_view;
+                }
                 for (std::size_t i = 0; i < pose.size(); ++i)
                     output.joints_cm[i] = static_cast<float>(pose[i] * rig.world_unit_cm);
                 const auto bytes = pc::encode(output);
@@ -296,6 +315,8 @@ int Run(const Options& options) {
             line << "OUT " << Fixed((outputs - outputs_at_report) / span, 1) << " fps  latency " << Fixed(latency_ms, 0)
                  << "ms  query " << Fixed(query_ms, 1) << "ms  own infer " << Fixed(infer_ms, 0) << "ms  seen L/R "
                  << runtime.seen_by_cameras()[0] << '/' << runtime.seen_by_cameras()[1];
+            if (const auto in_view = runtime.in_view_probability())
+                line << "  in-view L/R " << Fixed((*in_view)[0], 2) << '/' << Fixed((*in_view)[1], 2);
             for (int c = 0; c < kCameras; ++c) {
                 const auto frames = stats[c].frames.load();
                 const bool live = Now() - stats[c].last_arrival < 1.;
@@ -331,9 +352,10 @@ int main(int argc, char** argv) {
                     "Usage: hand_tracker_master [--camera N] [--fps 1..60] [--hands 1|2] [--threads 1..64]\n"
                     "                           [--model-threads 1..8] [--no-fp16] [--slave-ports P0,P1]\n"
                     "                           [--net-latency-ms MS] [--models DIR] [--model DIR] [--rig FILE]\n"
-                    "                           [--mirrored] [--image FILE] [--check-model]\n"
+                    "                           [--mirrored] [--image FILE] [--check-model] [--arch direct|litev3]\n"
                     "Defaults: own USB camera 0 (rig camera 2), 320x240, 15 FPS, slaves cam0 on UDP 5001 and\n"
-                    "cam1 on 5002, network latency 1 ms, HandDirect-wrist in models/hand_direct_wrist.\n"
+                    "cam1 on 5002, network latency 1 ms, HandDirect-wrist in models/hand_direct_wrist\n"
+                    "(--arch litev3: HandLiteV3 in models/hand_litev3).\n"
                     "PC IP and UDP port are prompted at startup. Outputs: H3D1 packets (see README). No GUI.\n";
                 return 0;
             }
@@ -352,6 +374,7 @@ int main(int argc, char** argv) {
             else if (key == "--model") options.model_dir = fs::u8path(value);
             else if (key == "--rig") options.rig = fs::u8path(value);
             else if (key == "--image") options.image = value;
+            else if (key == "--arch") options.arch = value;
             else if (key == "--slave-ports") {
                 const auto comma = value.find(',');
                 Require(comma != std::string::npos, "--slave-ports needs two ports, e.g. 5001,5002");
@@ -365,7 +388,9 @@ int main(int argc, char** argv) {
         for (int port : options.slave_ports) Require(port >= 1 && port <= 65535, "slave ports must be 1..65535");
         Require(options.slave_ports[0] != options.slave_ports[1], "the two slave ports must differ");
         if (options.models.empty()) options.models = ExecutableDirectory(argv[0]) / "models";
-        if (options.model_dir.empty()) options.model_dir = options.models / "hand_direct_wrist";
+        Require(options.arch == "direct" || options.arch == "litev3", "--arch must be direct or litev3");
+        if (options.model_dir.empty())
+            options.model_dir = options.models / (options.arch == "litev3" ? "hand_litev3" : "hand_direct_wrist");
         if (options.rig.empty()) options.rig = options.models / "rig.json";
         if (!options.check) {
             const auto destination = PromptDestination(std::cin, std::cout, "PC", 6000);

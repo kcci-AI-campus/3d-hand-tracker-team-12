@@ -5,9 +5,10 @@
     python pc_receiver.py --save out.npz  # also record every packet
 
 Packet (big-endian, 532 bytes): "H3D1", version 1, flags, reserved, sequence u32, query time f64 (s,
-master clock), latency f32 (ms), cameras that saw the left/right hand (u8 each), reserved, then
-126 float32: [left 21][right 21] joints x,y,z in cm in the rig frame (Y up). A hand seen by no
-camera still has joints (the network's guess); treat it as absent.
+master clock), latency f32 (ms), cameras that saw the left/right hand (u8 each), the model's
+in-view probability of each hand x255 (u8 each, when flags bit 0: HandLiteV3), then 126 float32:
+[left 21][right 21] joints x,y,z in cm in the rig frame (Y up). A hand seen by no camera (or, with
+HandLiteV3, in-view probability below 0.5) still has joints; treat it as absent.
 Needs only numpy (and matplotlib for --plot)."""
 import argparse
 import socket
@@ -20,15 +21,26 @@ SIZE = HEADER.size+126*4
 BONES = [(0, 1+4*f) for f in range(5)]+[(1+4*f+j, 2+4*f+j) for f in range(5) for j in range(3)]
 
 
-def decode(data):
-    """dict of one packet, or None for anything else."""
+def decode(data, swap_hands=False):
+    """dict of one packet, or None for anything else. swap_hands: exchange the left and right hand
+    (joints, cameras that saw it, in-view probability), for a setup that reports them the other way round."""
     if len(data) != SIZE:
         return None
-    magic, version, _, _, sequence, query_time, latency, seen_left, seen_right, _ = HEADER.unpack_from(data)
+    magic, version, flags, _, sequence, query_time, latency, seen_left, seen_right, in_view = HEADER.unpack_from(data)
     if magic != b'H3D1' or version != 1:
         return None
     joints = np.frombuffer(data, '>f4', 126, HEADER.size).astype(np.float32).reshape(2, 21, 3)
-    return dict(sequence=sequence, time=query_time, latency_ms=latency, seen=(seen_left, seen_right), joints_cm=joints)
+    in_view = ((in_view >> 8)/255., (in_view & 255)/255.) if flags & 1 else None
+    seen = (seen_left, seen_right)
+    if swap_hands:
+        joints, seen = joints[::-1].copy(), seen[::-1]
+        in_view = None if in_view is None else in_view[::-1]
+    return dict(sequence=sequence, time=query_time, latency_ms=latency, seen=seen, in_view=in_view, joints_cm=joints)
+
+
+def present(packet, hand):
+    """Whether a hand is there: the model's in-view probability when it has one, else any camera saw it."""
+    return packet['in_view'][hand] >= .5 if packet['in_view'] is not None else packet['seen'][hand] > 0
 
 
 def main():
@@ -37,6 +49,7 @@ def main():
     p.add_argument('--plot', action='store_true', help='Live 3D view of both hands')
     p.add_argument('--save', help='Record every packet to this .npz on exit (Ctrl+C)')
     p.add_argument('--count', type=int, default=0, help='Stop after this many packets (0: run until Ctrl+C)')
+    p.add_argument('--swap-hands', action='store_true', help='Exchange the left and right hand when reading')
     args = p.parse_args()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', args.port))
@@ -58,7 +71,7 @@ def main():
                 if view is not None:
                     plt.pause(.001)
                 continue
-            packet = decode(data)
+            packet = decode(data, args.swap_hands)
             if packet is None:
                 bad += 1
                 continue
@@ -71,14 +84,15 @@ def main():
             now = time.monotonic()
             if now-last_report >= 1:
                 left, right = packet['joints_cm'][:, 0]
-                print(f"#{packet['sequence']} latency {packet['latency_ms']:.0f}ms seen L/R {packet['seen'][0]}/{packet['seen'][1]} "
+                in_view_text = '' if packet['in_view'] is None else f" in-view {packet['in_view'][0]:.2f}/{packet['in_view'][1]:.2f}"
+                print(f"#{packet['sequence']} latency {packet['latency_ms']:.0f}ms seen L/R {packet['seen'][0]}/{packet['seen'][1]}{in_view_text} "
                       f"wrist L ({left[0]:.1f}, {left[1]:.1f}, {left[2]:.1f}) R ({right[0]:.1f}, {right[1]:.1f}, {right[2]:.1f}) cm "
                       f"| packets {received} lost {lost} bad {bad}", flush=True)
                 last_report = now
             if view is not None:
                 view.cla()
                 for hand, color in enumerate(('tab:blue', 'tab:orange')):
-                    style = '-' if packet['seen'][hand] else ':'
+                    style = '-' if present(packet, hand) else ':'
                     for a, b in BONES:
                         view.plot(*packet['joints_cm'][hand, [a, b]].T, color=color, linestyle=style)
                 view.set(xlim=(-40, 40), ylim=(-40, 40), zlim=(-40, 40), xlabel='X (cm)', ylabel='Y (cm, up)', zlabel='Z (cm)',

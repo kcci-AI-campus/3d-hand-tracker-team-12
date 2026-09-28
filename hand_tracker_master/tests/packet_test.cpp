@@ -19,14 +19,21 @@ int main() {
         output.time_s = 12345.678901234;
         output.latency_ms = 87.5f;
         output.cameras_seen = {3, 0};
+        output.has_in_view = true;
+        output.in_view = {.98f, .1f};
         for (std::size_t i = 0; i < output.joints_cm.size(); ++i) output.joints_cm[i] = static_cast<float>(i) - 60.25f;
         const auto bytes = pc::encode(output);
         Check(bytes.size() == 532, "H3D1 is 532 bytes");
         Check(bytes[0] == 'H' && bytes[1] == '3' && bytes[2] == 'D' && bytes[3] == '1' && bytes[4] == 1, "H3D1 header");
         Check(bytes[8] == 0x0a && bytes[11] == 0x0d && bytes[24] == 3 && bytes[25] == 0, "H3D1 big-endian fields");
+        Check(bytes[5] == 1 && bytes[26] == 250 && bytes[27] == 26, "H3D1 in-view bytes");
         const auto back = pc::decode(bytes.data(), bytes.size());
         Check(back && back->sequence == output.sequence && back->time_s == output.time_s && back->latency_ms == 87.5f &&
-              back->cameras_seen == output.cameras_seen && back->joints_cm == output.joints_cm, "H3D1 round trip");
+              back->cameras_seen == output.cameras_seen && back->joints_cm == output.joints_cm && back->has_in_view &&
+              std::abs(back->in_view[0] - .98f) < .003f, "H3D1 round trip");
+        output.has_in_view = false;
+        const auto plain = pc::encode(output);
+        Check(plain[5] == 0 && plain[26] == 0 && !pc::decode(plain.data(), plain.size())->has_in_view, "H3D1 without in-view");
         Check(!pc::decode(bytes.data(), 531), "H3D1 size check");
 
         uv_stream::Frame frame;

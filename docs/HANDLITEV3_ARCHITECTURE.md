@@ -52,7 +52,7 @@ HandLiteV3는 비동기로 도착하는 카메라 3대의 2D 손 관절로 원�
 
 ## 5. 스트림·배포와 관절 상태
 
-- `LiteV3Stream`(PyTorch)과 `LiteV3Runtime`(NumPy + ncnn)은 이벤트가 오면 encoder를 한 번 돌리고, query 때 기하 계산과 corrector를 돌립니다.
+- `LiteV3Stream`(PyTorch)과 `LiteV3Runtime`(NumPy + ncnn), 마스터 파이 C++ 런타임(`hand_tracker_master/src/litev3_runtime.*`, `--arch litev3`)은 이벤트가 오면 encoder를 한 번 돌리고, query 때 기하 계산과 corrector를 돌립니다. C++는 기하 계산을 double로 해서 Python과 같은 값을 냅니다.
 - **관절 상태**: 두 스트림은 관절마다 마지막 삼각측량(점과 그때 쓴 최신 검출의 촬영 시각)을 기억합니다. 삼각측량이 성공할 때만 갱신하고, 모델 예측은 넣지 않습니다. 상태는 과거 창 탐색이 직전 위치를 못 찾은 관절에만 씁니다. 그래서 한 카메라에만 보이는 기간이 아무리 길어도 그 ray 위에서 마지막 깊이로 기준점을 잡습니다. 직전 위치의 경과 시간 입력은 학습 범위 끝(`max_prior_age_s`, 1.2초)으로 자릅니다.
 - **학습과의 관계**: `forward()`(학습·평가)에는 상태가 없습니다. 과거 창 탐색이 모든 관절의 직전 위치를 찾는 동안에는 몇 번을 query해도 스트림과 `forward()`가 같습니다(테스트로 확인). 차이는 1.0초 넘게 삼각측량되지 않은 관절에서만 생기며, 학습에서는 그런 관절이 기준점 없음(`none`)이었던 자리입니다.
 - **내보내기**: ncnn 그래프 2개(`encoder` 이벤트 도착 시, `corrector` query 시). 결과 폴더의 `litev3.json`에 설정과 그래프 입력 shape가 있습니다. `runtime.error_mm`(관절별 예상 오차 mm), `runtime.in_view_probability`(손별; 0.5 미만이면 그 손은 세 카메라 모두 밖), `runtime.anchor_kind`(기준점 종류)를 읽습니다.

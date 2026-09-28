@@ -1,0 +1,48 @@
+{
+  "export_format": 4,
+  "config": {
+    "dim": 64,
+    "heads": 4,
+    "blocks": 2,
+    "dropout": 0.1,
+    "attention_dropout": 0.0,
+    "fit_span_s": 0.2,
+    "prior_span_s": 1.0,
+    "prior_step_s": 0.2,
+    "slots_per_camera": 8,
+    "event_span_s": 0.5,
+    "error_estimate": true,
+    "presence": true
+  },
+  "graphs": {
+    "encoder": {
+      "inputs": [
+        [
+          2,
+          210
+        ],
+        [
+          3
+        ]
+      ]
+    },
+    "corrector": {
+      "inputs": [
+        [
+          42,
+          56
+        ],
+        [
+          240,
+          64
+        ],
+        [
+          240
+        ],
+        [
+          240
+        ]
+      ]
+    }
+  }
+}
