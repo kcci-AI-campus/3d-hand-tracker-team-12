@@ -15,9 +15,10 @@ from hand_tracking.data import HandWindows
 from hand_tracking.engine import run_epoch
 
 # Settings that must be > 0 and >= 0; the model's own fields are checked by its config.
-POSITIVE = ('epochs', 'batch_size', 'threads', 'lr', 'prefetch')
+POSITIVE = ('epochs', 'batch_size', 'threads', 'lr', 'prefetch', 'reprojection_queries')
 NONNEGATIVE = ('workers', 'seed', 'max_clips', 'max_train_batches', 'max_val_batches', 'bone_weight', 'train_queries',
-               'weight_decay', 'relative_weight', 'error_weight', 'presence_weight', 'stage_weight')
+               'weight_decay', 'relative_weight', 'error_weight', 'presence_weight', 'stage_weight',
+               'reprojection_weight')
 # Settings that change speed, not results: a resume may differ in them.
 RUNTIME = ('workers', 'threads', 'cache_dir', 'prefetch')
 
@@ -49,6 +50,11 @@ def build_parser(argv=None):
                    help='Weight of the hand in-view loss (never changes the pose)')
     p.add_argument('--stage-weight', type=float, default=.5,
                    help="Weight of each earlier coarse-to-fine decoder stage's pose loss (HandDirect with refine)")
+    p.add_argument('--reprojection-weight', type=float, default=0.,
+                   help='Weight of the reprojection loss: the pose at recent frames\' capture times must lie on their '
+                        'detected 2D rays (0: off; one extra forward pass per batch)')
+    p.add_argument('--reprojection-queries', type=int, default=4,
+                   help='Newest detecting frames per window checked by the reprojection loss')
     p.add_argument('--lr', type=float, default=8.5e-4)
     p.add_argument('--weight-decay', type=float, default=.01)
     p.add_argument('--bone-weight', type=float, default=.1)
@@ -162,7 +168,8 @@ def main(argv=None):
     if args.max_clips or args.max_train_batches or args.max_val_batches:
         print('DEVELOPMENT RUN: metrics are not full-dataset performance.', flush=True)
     losses = dict(bone_weight=args.bone_weight, relative_weight=args.relative_weight, error_weight=args.error_weight,
-                  presence_weight=args.presence_weight, stage_weight=args.stage_weight)
+                  presence_weight=args.presence_weight, stage_weight=args.stage_weight,
+                  reprojection_weight=args.reprojection_weight, reprojection_queries=args.reprojection_queries)
     for epoch in range(first, args.epochs):
         train_loader.dataset.epoch = epoch
         train = run_epoch(model, train_loader, device, optimizer, scaler, args.max_train_batches, **losses)
@@ -177,6 +184,8 @@ def main(argv=None):
         if improved:
             save_checkpoint(output/'best.pt', saved)
         error_miss = '' if val['error_miss_mm'] is None else f" error_miss={val['error_miss_mm']:.2f}mm"
+        if val['reprojection_mrad'] is not None:
+            error_miss += f" reproj={val['reprojection_mrad']:.1f}mrad"
         if val['coarse_mpjpe_mm'] is not None:
             error_miss += f" coarse={val['coarse_mpjpe_mm']:.2f}mm"
         if val['presence_accuracy'] is not None:

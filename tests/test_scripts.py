@@ -91,8 +91,8 @@ class ScriptTests(unittest.TestCase):
 
     def test_direct_train_evaluate_predict_export(self):
         run = self.root/'direct'
-        self.assertIn('parameters=', self.train(run, model=TINY_DIRECT))
-        self.train(run, '--resume', model=TINY_DIRECT)
+        self.assertIn('reproj=', self.train(run, '--reprojection-weight', .1, model=TINY_DIRECT))
+        self.train(run, '--resume', '--reprojection-weight', .1, model=TINY_DIRECT)
         evaluation, files = self.evaluate_and_predict(run)
         self.assertIsNone(evaluation['error_miss_mm'])                         # no error, anchor or in-view head
         self.assertIsNone(evaluation['kind_rate']['triangulated'])

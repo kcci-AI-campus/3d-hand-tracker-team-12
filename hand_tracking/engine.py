@@ -3,6 +3,7 @@ import contextlib
 import time
 import torch
 from .accelerator import device_batches, is_xla, sync
+from .constants import RESIDUAL_UNIT
 from .contracts import model_inputs
 from .data import trim_padding
 from .model import ANCHOR_KINDS
@@ -53,6 +54,39 @@ def batch_loss(batch, output, bone_weight, relative_weight=0., error_weight=0., 
     return loss
 
 
+def reprojection_loss(model, batch, queries):
+    """Self-consistency with the cameras' own 2D detections: the model is queried again at the
+    capture times of each window's `queries` newest events that detected anything (it cannot use
+    an event before it arrives, so it never sees the frame it is checked against), and each
+    predicted joint must lie on that event's ray: the angle between the ray (the input's nominal
+    u,v ray) and the direction from the ray's origin to the joint, i.e. the reprojection error over
+    the focal length (0.01 rad is about 3.8 px at 320x240, 55 degrees). SmoothL1 on the angle in
+    radians with beta RESIDUAL_UNIT (0.01 rad): linear beyond it, so robust to false detections, and
+    about the pose loss's size (a 2 cm miss at 60 cm is 0.033 rad; pose_loss is in metres).
+    Returns (loss, summed angle in rad, detected joints), fixed shapes for XLA."""
+    features, valid, camera, capture, arrival, present = model_inputs(batch)[:6]
+    b, e = present.shape
+    detected = present.bool() & valid.flatten(2).any(-1)                                    # [B,E]
+    score = torch.where(detected, capture.float(), torch.full_like(capture.float(), -1e9))
+    if e < queries:
+        score = torch.nn.functional.pad(score, (0, queries-e), value=-1e9)
+    score, index = score.topk(queries, dim=-1)                                              # newest captures
+    chosen = score > -1e8                                                                   # [B,K]
+    index = index.clamp_max(e-1)
+    rows = torch.arange(b, device=index.device)[:, None]
+    query = torch.where(chosen, score, torch.zeros_like(score))
+    pose = model(features, valid, camera, capture, arrival, present, query).float()          # [B,K,2,21,3]
+    rays = features[rows, index].float()                                                    # [B,K,2,21,14]
+    seen = valid[rows, index].bool() & chosen[..., None, None]                              # [B,K,2,21]
+    direction = rays[..., 5:8]/rays[..., 5:8].norm(dim=-1, keepdim=True).clamp_min(1e-8)
+    relative = pose-rays[..., 2:5]
+    angle = torch.atan2(torch.linalg.cross(relative, direction).norm(dim=-1), (relative*direction).sum(-1))
+    angle = torch.where(seen, angle, torch.zeros_like(angle))
+    misses = torch.nn.functional.smooth_l1_loss(angle, torch.zeros_like(angle), beta=RESIDUAL_UNIT, reduction='none')
+    count = seen.sum()
+    return (misses*seen).sum()/count.clamp_min(1), angle.detach().sum(), count
+
+
 # Mixed precision: consecutive overflowing steps GradScaler may skip before training stops.
 MAX_SKIPPED_STEPS = 50
 
@@ -83,12 +117,15 @@ def _check_finite(nonfinite, phase):
 
 
 def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_weight=.1, log_every=50,
-              relative_weight=0., error_weight=0., presence_weight=0., stage_weight=0.):
+              relative_weight=0., error_weight=0., presence_weight=0., stage_weight=0., reprojection_weight=0.,
+              reprojection_queries=4):
     """One pass over loader; trains when an optimizer is given. Metrics use the final query:
     MPJPE and PCK, the error estimate's miss, and per anchor kind (ANCHOR_KINDS) the share of
     joints with a target, their MPJPE and their anchor's alone (what the correction starts from;
     None for a model without an anchor, HandDirect), and coarse_mpjpe_mm, the first
-    coarse-to-fine stage's MPJPE (None for a single-stage model).
+    coarse-to-fine stage's MPJPE (None for a single-stage model). With reprojection_weight, the
+    reprojection loss (reprojection_loss, one extra forward pass per batch) is added and
+    reprojection_mrad reports its mean angle (None without it).
 
     On XLA (TPU) batches keep their padded shape, float32 throughout, each batch ends with
     sync() and the device is read only every log_every batches and at the end (the first
@@ -98,6 +135,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_
     xla = is_xla(device)
     model.train(training)
     pose, coarse, loss_mean, error_miss = PoseTotals(), PoseTotals(), WeightedMean(), WeightedMean()
+    reprojection = WeightedMean()   # mean angle (rad) over the detected joints checked
     presence_hit, out_of_view = WeightedMean(), WeightedMean()   # final query, every hand
     kind_rate = {name: WeightedMean() for name in ANCHOR_KINDS}
     kind_mm = {name: WeightedMean() for name in ANCHOR_KINDS}
@@ -110,6 +148,10 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_
         with torch.set_grad_enabled(training), precision:
             output = model(*model_inputs(batch), return_details=True)
             loss = batch_loss(batch, output, bone_weight, relative_weight, error_weight, presence_weight, stage_weight)
+            if reprojection_weight:
+                term, angle, count = reprojection_loss(model, batch, reprojection_queries)
+                loss = loss+reprojection_weight*term
+                reprojection.add(angle/count.clamp_min(1), count)
         if xla:
             nonfinite = nonfinite+(~torch.isfinite(loss.detach())).int()
         elif not torch.isfinite(loss):
@@ -168,6 +210,7 @@ def run_epoch(model, loader, device, optimizer=None, scaler=None, limit=0, bone_
     return dict(loss=loss_mean.mean, mpjpe_mm=summary['mpjpe_mm'], pck20=summary['pck20'],
                 mpjpe_world_mm=summary['mpjpe_world_mm'], mpjpe_rel_mm=summary['mpjpe_rel_mm'],
                 coarse_mpjpe_mm=coarse.summary()['mpjpe_mm'] if coarse.samples else None,
+                reprojection_mrad=None if reprojection.mean is None else reprojection.mean*1e3,
                 error_miss_mm=error_miss.mean, presence_accuracy=presence_hit.mean, out_of_view_rate=out_of_view.mean,
                 kind_rate={name: mean.mean for name, mean in kind_rate.items()},
                 kind_mpjpe_mm={name: mean.mean for name, mean in kind_mm.items()},

@@ -63,6 +63,58 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(report['joints'], 21)                                # the out-of-view hand has no target
 
 
+class ReprojectionTests(unittest.TestCase):
+    class MovingHands(torch.nn.Module):
+        """Predicts the true moving hands at any query time, plus a learnable offset."""
+        def __init__(self, base, velocity):
+            super().__init__()
+            self.base, self.velocity = base, velocity
+            self.offset = torch.nn.Parameter(torch.zeros(3))
+
+        def forward(self, features, valid, camera, capture, arrival, present, query, return_details=False):
+            return self.base+self.velocity*query[..., None, None, None]+self.offset
+
+    def batch(self):
+        from model_helpers import synthetic_events
+        torch.manual_seed(0)
+        base, velocity = torch.randn(2, 21, 3)*.1, torch.randn(2, 21, 3)*.3
+        captures = [t for t in torch.arange(-.6, 0, .085).tolist() for _ in range(3)]
+        inputs = synthetic_events(lambda t: base+velocity*t, captures, [c for _ in range(len(captures)//3) for c in range(3)])
+        keys = ('event_features', 'event_valid', 'event_camera', 'event_capture', 'event_arrival', 'event_present')
+        batch = dict(zip(keys, inputs), query_times=torch.zeros(1, 1))
+        return batch, self.MovingHands(base, velocity)
+
+    def test_exact_pose_has_no_reprojection_error_and_an_offset_does(self):
+        from hand_tracking.engine import reprojection_loss
+        batch, model = self.batch()
+        loss, angle, count = reprojection_loss(model, batch, 4)
+        self.assertEqual(int(count), 4*42)                                      # four frames, every joint detected
+        self.assertLess(float(angle/count), 1e-5)
+        self.assertLess(float(loss), 1e-6)
+        with torch.no_grad():
+            model.offset += torch.tensor([.05, 0., 0.])                          # 2 cm off
+        loss, angle, count = reprojection_loss(model, batch, 4)
+        self.assertGreater(float(angle/count), .005)
+        loss.backward()
+        self.assertGreater(float(model.offset.grad.abs().sum()), 0.)
+
+    def test_checks_the_newest_detecting_frames_only(self):
+        from hand_tracking.engine import reprojection_loss
+        batch, model = self.batch()
+        batch['event_valid'] = batch['event_valid'].clone()
+        batch['event_valid'][0, -3:] = False                                     # the newest three detect nothing
+        seen = []
+        forward = model.forward
+        def record(*args, **kwargs):
+            seen.append(args[6].clone())
+            return forward(*args, **kwargs)
+        model.forward = record
+        _, _, count = reprojection_loss(model, batch, 4)
+        self.assertEqual(int(count), 4*42)
+        capture = batch['event_capture'][0]
+        torch.testing.assert_close(seen[0][0].sort().values, capture[-7:-3].sort().values)
+
+
 class OptimizerStepTests(unittest.TestCase):
     """Loss finite, gradient infinite (sqrt at 0): skipped with mixed precision, an error without."""
 
