@@ -1,221 +1,90 @@
 # 3D-Hand-Tracker
 
-Raspberry Pi 3대와 MediaPipe Hand Landmarker를 이용한 다중 시점 손 랜드마크 추적 프로젝트입니다. 각 장치에서 카메라 영상을 추론하고, 마스터에서 세 카메라의 영상과 손 랜드마크를 함께 표시합니다.
+라즈베리 파이 3대의 카메라로 **두 손의 3D 관절 42개를 실시간 추정**하는 프로젝트입니다. 각 파이가 2D 손 관절을 검출하고, 마스터 파이가 서로 다른 시각에 도착한 세 카메라의 관측을 신경망으로 합쳐 3D 좌표를 만든 뒤 PC로 보냅니다. 학습 데이터는 GigaHands 3D 손 동작을 같은 카메라 배치로 투영해 만들었습니다.
 
-현재 구현은 **3개 시점의 손 추적 및 시각화**를 지원합니다. 카메라 보정, 촬영 동기화 및 삼각측량을 통한 통합 3D 좌표 복원은 구현되어 있지 않습니다.
+```text
+slave 파이 (카메라 0) ─ 2D 관절 UV2/UDP ─┐
+slave 파이 (카메라 1) ─ 2D 관절 UV2/UDP ─┼─> 마스터 파이 (카메라 2) ── 3D 관절 H3D1/UDP ──> PC 3D 뷰어
+                                        │   2D → ray 특징 → HandDirect-wrist / HandLiteV3 (ncnn)
+```
 
-## 주요 기능
-
-- 각 Raspberry Pi에서 320×240 영상의 손 랜드마크 추론
-- 로컬 카메라 1대와 원격 카메라 2대의 영상을 마스터에서 표시
-- 960×240 통합 창 또는 카메라별 독립 창 지원
-- TCP를 통한 JPEG 영상 및 랜드마크 전송
-- 최신 프레임 우선 처리, 송신기 자동 재접속 및 오래된 영상의 `STALE` 표시
-- USB 카메라와 Picamera2 기반 CSI 카메라 지원
-- 카메라 1대만으로 실행하는 독립형 로컬 화면 지원 (`local_camera.py`)
-
-## 시스템 구성
-
-| 장치 | 역할 | 실행 파일 |
+| 단계 | 내용 | 폴더 |
 |---|---|---|
-| Pi 1 | 로컬 추론, 원격 영상 수신 및 화면 표시 | `master.py` |
-| Pi 2 | 카메라 추론 및 Pi 1로 전송 | `sender.py --id 2` |
-| Pi 3 | 카메라 추론 및 Pi 1로 전송 | `sender.py --id 3` |
+| 2D 검출 | 공식 MediaPipe Hand Landmarker(`hand_landmarker.task`)를 ncnn으로 변환해 C++로 실행, 320×240 | [hand_tracker_slave](hand_tracker_slave/README.md) |
+| 3D 추정 | slave 2대 + 자기 카메라의 최근 0.5초 관측 → 두 손 3D 관절. 촬영 시각 동기화 없이 촬영→송신 시간으로 복원 | [hand_tracker_master](hand_tracker_master/README.md) |
+| 표시 | H3D1 패킷 수신, 손 3D 렌더링 | [hand_tracker_master/tools](hand_tracker_master/tools) |
+| 모델 | 학습·평가·ncnn 내보내기 (PyTorch) | [hand_tracking](hand_tracking), [training](training), [docs/MODELS.md](docs/MODELS.md) |
+| 학습 데이터 | GigaHands → 3카메라 비동기 투영, 설치 오차·지연·미검출·오검출 시뮬레이션 | [GIGAHANDS.md](GIGAHANDS.md) |
 
-각 Pi에 카메라 1대를 연결합니다. Pi 2와 Pi 3은 각각 Pi 1의 TCP 포트 **5001**, **5002**에 접속합니다. Pi 1에서는 `sender.py`를 별도로 실행하지 않습니다.
+## 모델과 결과
 
-## 요구 환경
+| | **HandDirect-wrist** (마스터 기본) | **HandLiteV3** |
+|---|---|---|
+| 방식 | 신경망만으로 좌표 직접 출력 (손목 기준 분해 + 단계적 보정) | 직선 맞춤 삼각측량 기준점 + 보정 신경망 |
+| 파라미터 | 202,092 | 133,797 |
+| 검증 MPJPE | 22.8mm (GPU 60 epoch) | 20.36mm (TPU 85 epoch) |
+| 추가 출력 | — | 관절별 예상 오차, 손별 '시야 안' 확률 |
+| 파이 query 시간 | 5–15ms | — |
 
-- Raspberry Pi 3대와 카메라 3대
-- 64비트 Raspberry Pi OS 및 해당 Python 버전용 MediaPipe wheel
-- 장치 간 통신이 가능한 사설 LAN — 유선 연결 권장
-- 마스터의 GUI 데스크톱 또는 X11 전달 환경
-
-## 설치
-
-프로젝트를 각 Pi에 내려받고 프로젝트 폴더에서 다음 명령을 실행합니다.
-
-```bash
-sudo apt update
-sudo apt install -y python3-venv python3-opencv python3-numpy
-
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install --only-binary=:all: -r requirements-sender.txt
-python download_model.py
-python -m pip check
-```
-
-`requirements-sender.txt`는 마스터를 포함한 **3대 모두**에서 사용합니다. 모델은 `models/hand_landmarker.task`에 다운로드됩니다.
-
-CSI 카메라를 사용하는 Pi에는 Picamera2를 추가 설치합니다.
-
-```bash
-sudo apt install -y python3-picamera2
-```
-
-MediaPipe 설치 가능 여부는 OS 아키텍처와 Python 버전에 따라 달라집니다. 설치 오류 및 NumPy/OpenCV 호환성에 관한 설명은 [상세 가이드](GUIDE.md#설치)를 참고하세요. 화면 표시에는 GUI를 지원하는 OpenCV가 필요합니다.
+- 수치는 HandLiteV3가 앞서지만(장편 클립에서는 차이 0.7mm 이하), 실제 장치에서는 HandDirect-wrist가 손 모양을 더 자연스럽게 유지해 마스터 기본값으로 씁니다. `--arch litev3`로 바꿀 수 있습니다.
+- 구조: [HANDDIRECT_ARCHITECTURE.md](docs/HANDDIRECT_ARCHITECTURE.md), [HANDLITEV3_ARCHITECTURE.md](docs/HANDLITEV3_ARCHITECTURE.md)
 
 ## 실행
 
-### 자신의 카메라만 사용하기
-
-위 설치를 마친 장치 한 대에서 다음 명령을 실행하면, 해당 장치의 카메라에 Hand Landmarker를 실행하고 영상 위에 손 관절 21개와 연결선, 검출된 손 개수 및 추론 시간을 표시합니다. 다른 Pi나 네트워크 연결은 필요하지 않습니다. GUI를 지원하는 OpenCV와 데스크톱 또는 X11 전달 환경이 필요합니다.
+**카메라 배치**: 모델은 정해진 배치로 학습했습니다. 카메라 0 (−40, −40, 20)cm, 카메라 1 (40, −40, 20)cm, 카메라 2 (0, 40, 40)cm, 모두 원점을 바라봅니다(Y 위쪽). 자세한 내용은 [마스터 README](hand_tracker_master/README.md#설치할-때-반드시-맞출-것-카메라-배치)를 보세요.
 
 ```bash
-python local_camera.py
-```
+# slave 파이 2대 (실행하면 마스터 IP와 카메라 번호 0/1을 묻습니다)
+cd hand_tracker_slave && bash scripts/build_pi.sh && bash run_slave.sh
 
-기본값은 USB 카메라 `0`, 해상도 320×240, 최대 2개 손, 처리 상한 15 FPS입니다. 다른 USB 카메라 또는 CSI 카메라는 다음과 같이 선택합니다.
+# 마스터 파이 (hand_tracker_slave 폴더를 옆에 함께 복사; 실행하면 PC IP를 묻습니다)
+cd hand_tracker_master && bash scripts/build_pi.sh && bash run_master.sh
+```
 
 ```bash
-python local_camera.py --camera 1
-python local_camera.py --backend picamera2
-python local_camera.py --hands 1 --fps 10
+# PC: 3D 보기
+pip install numpy pyqtgraph PyQt6 PyOpenGL
+python hand_tracker_master/tools/hand_viewer.py
 ```
 
-`Q`, `Esc`, 창 닫기 또는 `Ctrl+C`로 종료합니다. 모델 경로는 `--model`로 지정할 수 있으며, 전체 옵션은 `python local_camera.py --help`로 확인합니다.
+## 학습
 
-### World Landmarks 3D 와이어프레임 보기
-
-로컬 웹캠에서 추론한 `hand_world_landmarks`를 3D 와이어프레임으로 표시합니다. 기존 MediaPipe·NumPy·GUI 지원 OpenCV 환경을 사용하며 추가 렌더링 패키지는 필요하지 않습니다.
-
-```bash
-python download_model.py
-python world_landmarks_viewer.py
+```powershell
+python -m venv .venv-transformer
+.\.venv-transformer\Scripts\python.exe -m pip install -r requirements-transformer.txt
+.\.venv-transformer\Scripts\python.exe -m training.train --arch direct --data exports/gigahands_pi3_overlap --output runs/direct --cache-dir runs/cache
+.\.venv-transformer\Scripts\python.exe -m training.export --checkpoint runs/direct/best.pt --output runs/direct/deploy --check-input exports/gigahands_pi3_overlap/val/clip_00001.npz
 ```
 
-Windows에서 패키지가 없다면 `python -m pip install -r requirements-sender.txt opencv-contrib-python numpy`로 설치합니다. `opencv-python-headless` 환경에서는 창을 표시할 수 없습니다.
-
-- 마우스 왼쪽 버튼 드래그: 시점 회전
-- 마우스 휠 또는 `+` / `-`: 확대·축소
-- `Space`: 현재 영상과 관절 정지·재개 (정지 상태에서도 회전 가능)
-- `R`: 시점 초기화, `I`: 관절 번호 표시
-- `Q` / `Esc` 또는 창 닫기: 종료
-
-`--camera 1`, `--hands 1`, `--fps 10`, `--backend picamera2`, `--model 경로` 옵션을 지원합니다. 왼쪽에는 카메라 영상, 오른쪽에는 손별 3D 패널을 표시합니다. 두 패널의 시점은 함께 회전합니다. 검출 순서가 바뀌면 손의 패널 위치도 바뀔 수 있습니다.
-
-좌표는 모델이 추정한 미터 단위 값을 그대로 사용하며 격자 간격은 2cm입니다. 각 손의 원점은 손의 기하학적 중심 부근입니다. 두 손 사이의 실제 거리나 카메라 기준 절대 위치를 표현하는 좌표가 아니므로 손별로 분리해서 표시합니다. 기본 시점은 이미지와 같이 +X가 오른쪽, +Y가 아래쪽이며 축 표시도 함께 회전합니다.
-
-### 세 장치로 실행하기
-
-아래 예시는 Pi 1의 LAN IP가 `192.168.1.100`인 경우입니다. 실제 주소로 변경하세요. 각 장치의 프로젝트 폴더에서 실행합니다.
-
-### Pi 1 — 마스터
-
-GUI 데스크톱 터미널 또는 X11 전달이 설정된 터미널에서 실행합니다.
-
-```bash
-source .venv/bin/activate
-python master.py
-```
-
-### Pi 2 — 송신기
-
-```bash
-source .venv/bin/activate
-python sender.py --master 192.168.1.100 --id 2
-```
-
-### Pi 3 — 송신기
-
-```bash
-source .venv/bin/activate
-python sender.py --master 192.168.1.100 --id 3
-```
-
-마스터는 `Q`, `Esc`, 창 닫기 또는 `Ctrl+C`로 종료합니다. 송신기는 `Ctrl+C`로 종료합니다.
-
-### 실행 옵션
-
-| 옵션 | 적용 대상 | 설명 |
-|---|---|---|
-| `--separate-windows` | 마스터 | 카메라별 창 3개로 표시 |
-| `--backend picamera2` | 공통 | CSI 카메라 사용 |
-| `--camera 1` | 공통 | USB 카메라 인덱스 지정, 기본값 `0` |
-| `--hands 1` | 공통 | 검출할 손의 최대 개수를 1개로 제한 |
-| `--fps 10` | 공통 | 처리 속도 상한 지정, 기본값 `15` |
-| `--quality 60` | 송신기 | JPEG 품질 지정, 기본값 `75` |
-| `--base-port 7000` | 공통 | 기본 포트 변경. 송신 연결은 base+1, base+2 사용 |
-
-포트를 변경할 때는 마스터와 두 송신기에 같은 `--base-port` 값을 지정합니다. 전체 옵션은 `python master.py --help` 및 `python sender.py --help`로 확인할 수 있습니다.
-
-Windows에서 VS Code로 실행하고 VcXsrv로 화면을 표시하는 절차는 [VS Code·VcXsrv 가이드](GUIDE.md#vs-code에서-실행하고-vcxsrv로-화면-표시)를 참고하세요.
+- Colab(TPU)은 [notebooks/gigahands_colab.ipynb](notebooks/gigahands_colab.ipynb)를 씁니다(현재 소스를 내장, `python -m training.build_colab_notebook`으로 다시 생성).
+- 학습 데이터 생성: `python gigahands_sim.py` (GUI), 일괄 생성은 [GIGAHANDS.md](GIGAHANDS.md)
+- 옵션·지표·배포는 [docs/MODELS.md](docs/MODELS.md)
 
 ## 프로젝트 구조
 
 ```text
 3D-Hand-Tracker/
-├── master.py                # 로컬 추론, 원격 영상 수신 및 화면 표시
-├── local_camera.py          # 자신의 카메라만 추론하고 화면 표시 (네트워크 없음)
-├── dataset_viewer.py        # 재라벨링 데이터 ZIP/폴더 검수 서버
-├── viewer/index.html        # 이미지·관절 및 검수 기록 UI
-├── sender.py                # 카메라 추론 및 TCP 송신
-├── protocol.py              # 프레임 패킷 인코딩 및 수신
-├── download_model.py        # Hand Landmarker 모델 다운로드
-├── requirements-sender.txt  # 공통 Python 의존성
-├── tests/                   # 프로토콜 및 로컬 마스터 테스트
-├── GUIDE.md                 # 상세 설정, VcXsrv 및 구현 설명
-└── README.md
+├── hand_tracker_slave/      # slave 파이: 카메라 → 2D 손 관절 → UV2/UDP (C++, ncnn)
+├── hand_tracker_master/     # 마스터 파이: slave 2대 + 자기 카메라 → 3D 관절 → H3D1/UDP (C++, ncnn)
+│   └── tools/               #   PC 수신기·3D 뷰어, 가짜 slave, 모델·배치·golden 데이터 생성
+├── hand_tracking/           # 모델 라이브러리: HandDirect, HandLiteV3, 데이터, 런타임 (PyTorch/NumPy)
+├── training/                # 학습·평가·추론·내보내기·Colab 노트북 생성 (python -m training.<이름>)
+├── notebooks/               # Colab 학습 노트북
+├── gigahands_*.py, motion_archive.py, npz_reader.py, dataset_quality.py, start_gigahands.ps1
+│                            # GigaHands 시뮬레이터·학습 데이터 생성 (GIGAHANDS.md)
+├── profiles/, samples/      # 실측 타이밍 프로필, 생성 설정·예시
+├── tests/                   # python -m unittest discover -s tests
+├── docs/                    # MODELS, 모델 구조 문서, archive/ (개발 이력)
+└── requirements-*.txt
 ```
-
-## YOLO26n Pose 학습 (Colab)
-
-재라벨링 노트북의 입력은 **Ultralytics Hand Keypoints 데이터셋**입니다. 노트북 내부에서 [Ultralytics 공식 배포 ZIP](https://github.com/ultralytics/assets/releases/download/v0.0.0/hand-keypoints.zip)을 직접 다운로드하므로 별도 입력 파일을 준비할 필요가 없습니다. 이 데이터셋은 MediaPipe로 자동 주석된 hand 1클래스·21개 관절 데이터이며, Google의 MediaPipe 학습 원본 데이터셋과는 다릅니다.
-
-기존 관절·visibility를 유지하면서 좌우 클래스를 추가하려면 [MediaPipe 재라벨링 노트북](notebooks/relabel_mediapipe_hand_pose.ipynb)을 실행합니다. 원본 손과 새 MediaPipe 예측을 일대일 대응시킨 뒤, `v>0` 관절의 픽셀 차이가 원본 bbox 대각선 대비 평균 5% 이하·최대 15% 이하인 이미지만 채택합니다. 기준은 설정 셀에서 조정할 수 있습니다. 원본 이미지 바이트와 라벨의 bbox·키포인트·visibility 토큰을 보존하고 클래스만 `left_hand/right_hand`로 교체합니다. 손 개수 차이·모호한 매칭·좌우 점수 미달 등 제외 사유와 비교 거리를 기록합니다. 생성 ZIP은 아래 학습 노트북의 `DATA_SOURCE="custom_handedness"`와 `DATA_ZIP`에 지정합니다.
-
-handedness는 자동 생성한 의사 라벨입니다. 기존 visibility의 0/1/2를 그대로 보존하며, 관절별 confidence를 생성하지 않습니다. 미리보기는 원본 관절(초록)과 새 추론(자홍)을 겹쳐 표시합니다. 두 결과가 일치해도 정답을 보장하지 않으므로 검수해야 합니다. 검출 실패나 어느 손이든 불일치한 이미지는 배경으로 간주하지 않고 전체 제외합니다.
-
-[Colab용 학습 노트북](notebooks/train_yolo26n_hand_pose.ipynb)을 Colab에 업로드하고 GPU 런타임에서 실행합니다. 기본 설정은 **MediaPipe로 라벨링된 공개 Hand Keypoints 데이터셋**을 자동 다운로드하여 `yolo26n-pose.pt`를 `hand` 1클래스, 손 관절 21개로 파인튜닝합니다. Google의 MediaPipe 모델 학습 원본 데이터셋을 의미하지 않습니다.
-
-- 기본 실행에는 데이터 업로드가 필요하지 않습니다. [데이터 출처 및 이용 조건](https://docs.ultralytics.com/datasets/pose/hand-keypoints/)을 확인하세요.
-- 공개 데이터에는 좌우 구분이 없어 기본 결과의 `handedness`는 `null`입니다. `DATA_SOURCE="custom_handedness"`를 선택하면 `0=left_hand`, `1=right_hand`로 직접 라벨링한 ZIP으로 2클래스 학습이 가능합니다.
-- 라벨 검사, 정답 미리보기, 학습, 검증, 관절별 confidence 시각화 및 결과 ZIP 다운로드를 포함합니다.
-- 좌우 반전 증강은 끄며, 선택적으로 Google Drive에 체크포인트를 저장합니다.
-- 관절 confidence는 실제 visibility 확률과 다릅니다. 현재 카메라 프로그램은 MediaPipe를 사용하며, 학습한 YOLO 가중치의 실시간 연결은 별도 구현이 필요합니다.
-
-## 재라벨링 데이터 검수 뷰어
-
-한 장씩 보면서 삭제하려면 Google Drive의 같은 폴더에 [이미지·라벨 삭제 노트북](notebooks/curate_hand_keypoints.ipynb)과 데이터 ZIP을 놓고 Colab에서 실행하세요. Drive를 마운트하고 `NOTEBOOK_DIR`에 그 폴더 경로를 지정합니다. ZIP 하나는 자동 선택하며, 여러 개면 `ZIP_NAME`에 파일명만 입력합니다. **현재 보는 이미지와 라벨 한 쌍만 Colab 임시 폴더에 압축 해제**하고, 다른 이미지로 이동하면 이전 캐시를 지웁니다. 삭제 버튼은 현재 캐시를 지우고 Drive의 `review_state/ZIP이름/review_state.json`에 삭제 목록을 저장해 즉시 목록에서 제외합니다. 마지막에 남은 파일을 원본 ZIP에서 하나씩 읽어 새 ZIP에 저장하므로 전체 압축 해제는 하지 않습니다. 원본 ZIP은 검수 중 수정하지 않습니다.
-
-Colab/Jupyter에서 한 번에 10장씩 보려면 [이미지·키포인트 10장 뷰어 노트북](notebooks/view_hand_keypoints_10.ipynb)을 사용합니다. 기존/재라벨링 데이터 ZIP 또는 폴더를 읽고, 2열×5행 또는 5열×2행으로 관절·번호·박스를 표시합니다. 이전/다음, 페이지 번호, 분할 필터, 파일명 검색을 지원하며, 클래스명은 데이터 YAML에서 읽습니다.
-
-Python 3.9 이상과 웹 브라우저로 실행하며 추가 패키지 설치는 필요하지 않습니다. 프로젝트 폴더에서 ZIP 또는 압축을 푼 데이터 폴더를 지정합니다.
-
-```bash
-python dataset_viewer.py "D:/datasets/hand_mediapipe_relabel.zip"
-# 폴더로 열기
-python dataset_viewer.py "D:/datasets/hand_mediapipe_relabel"
-```
-
-터미널에 표시되는 [로컬 뷰어](http://127.0.0.1:8765)를 브라우저에서 엽니다. 다른 프로그램이 포트를 사용 중이면 `--port 8766`을 붙입니다. 서버는 자신의 컴퓨터에서만 접속하며 `Ctrl+C`로 종료합니다.
-
-- ZIP을 풀지 않고 이미지 한 장씩 확인: 이전/다음 버튼, `←`/`→`, 번호 이동, 파일명·원본 경로 검색
-- train/val/test 및 검수 상태 필터, 화면 맞춤·확대, bbox·좌우·관절 번호·연결선 표시 전환
-- 관절 위에 마우스를 올려 좌표 확인, 손별 관절 좌표 표 및 원본 YOLO 라벨 확인
-- `A`: 정상, `R`: 재검토, `U`: 미검수. 메모와 검수 상태는 브라우저에 자동 저장하며, JSON으로 저장·불러오기 가능
-
-뷰어는 재라벨링 노트북의 `0=left_hand`, `1=right_hand`, 관절 21개 형식을 사용합니다. 좌우 score는 `manifest.jsonl`에 있을 때 표시합니다. 라벨이 없거나 잘못된 이미지도 목록에서 숨기지 않고 오류를 표시합니다.
-
-검수 기록은 원본 이미지나 라벨을 수정하거나 학습에서 자동 제외하지 않습니다. 브라우저 데이터 삭제·다른 브라우저 사용에 대비해 **검수 JSON 저장**으로 기록을 보관하세요. JSON은 동일 데이터 지문에만 불러올 수 있으며, ZIP과 압축을 푼 폴더는 서로 다른 데이터 지문을 사용합니다. 같은 포트와 동일 ZIP/폴더를 다시 열면 기존 브라우저 기록을 이어 볼 수 있습니다.
-
-재라벨링 과정에서 제외된 이미지는 결과 ZIP에 없으므로 화면에서 확인할 수 없습니다. 처리 기록에서는 제외 사유별 개수만 확인합니다.
 
 ## 테스트
 
 ```bash
-python -m unittest discover -s tests -v
-python -m compileall -q sender.py master.py local_camera.py dataset_viewer.py protocol.py download_model.py
+python -m unittest discover -s tests          # Python (모델·데이터·시뮬레이터)
+ctest --test-dir hand_tracker_master/build    # C++ (build_pi.sh가 실행): golden 비교, 패킷, 특징
 ```
 
-단위 테스트와 별도로 실제 Pi, 카메라 및 GUI 환경에서 통합 동작을 확인해야 합니다. 실제 장치의 FPS와 지연은 측정되지 않았으며, `--fps` 값은 성능 보장이 아닌 처리 상한입니다.
+## 개발 이력
 
-## 제한 사항
-
-- 카메라 촬영 시각이 동기화되지 않으며, MediaPipe world landmarks는 카메라 간 공통 좌표가 아닙니다.
-- 인증과 암호화가 없는 TCP 통신을 사용하므로 신뢰하는 사설 LAN에서 실행합니다.
-- 마스터의 로컬 카메라 오류 이후에는 원인을 해결하고 마스터를 재시작해야 합니다.
-
-프로토콜, 장애 처리 및 3D 확장에 관한 설명은 [상세 가이드](GUIDE.md)를 참고하세요.
+MediaPipe Python 프로토타입(JPEG/TCP 3화면 표시), 지연 측정, YOLO 2D 검출 실험, 이전 3D 모델들(순환 보정 모델 → 이벤트 모델 → HandLite v1)과 쓰지 않은 방법은 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)에 정리했습니다.

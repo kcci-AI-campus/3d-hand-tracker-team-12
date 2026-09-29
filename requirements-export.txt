@@ -1,0 +1,6 @@
+# Deployment export and runtime checks; in addition to requirements-transformer.txt.
+# training/export.py converts the networks to ncnn with pnnx.
+# Tested with torch 2.14, ncnn/pnnx 20260526.
+# On the device, hand_tracking/runtime.py (HandLiteV3) and direct_runtime.py (HandDirect) need only numpy and ncnn.
+ncnn>=1.0.20260526
+pnnx>=20260526

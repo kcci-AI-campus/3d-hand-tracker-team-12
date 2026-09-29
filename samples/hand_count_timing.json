@@ -1,0 +1,5 @@
+{
+  "hand_count_timing": true,
+  "hand_inference_ms": [27.0, 56.0, 85.5],
+  "hand_timing_base_fps": 19.0
+}

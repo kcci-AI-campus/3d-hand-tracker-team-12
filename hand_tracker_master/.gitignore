@@ -1,0 +1,4 @@
+build/
+dist/
+*.log
+tools/__pycache__/

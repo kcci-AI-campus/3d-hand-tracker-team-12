@@ -1,0 +1,116 @@
+7767517
+114 127
+Input                    in0                      0 1 in0
+Input                    in1                      0 1 in1
+Input                    in2                      0 1 in2
+Split                    splitncnn_0              1 2 in2 3 4
+Input                    in3                      0 1 in3
+MemoryData               pnnx_unique_0            0 1 6 0=64 1=42
+Gemm                     gemm_0                   1 1 in0 7 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=56
+GELU                     gelu_22                  1 1 7 8
+Gemm                     gemm_1                   1 1 8 9 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=64
+BinaryOp                 add_0                    2 1 9 6 10 0=0
+Split                    splitncnn_1              1 2 10 11 12
+MemoryData               pnnx_fold_94             0 1 13 0=64 1=1
+ExpandDims               unsqueeze_71             1 1 in3 14 -23303=1,1
+Gemm                     gemm_2                   1 1 14 15 10=4 2=0 3=1 4=0 5=1 6=1 7=240 8=16 9=1
+GELU                     gelu_23                  1 1 15 16
+Gemm                     gemm_3                   1 1 16 17 10=4 2=0 3=1 4=0 5=1 6=1 7=240 8=64 9=16
+ExpandDims               unsqueeze_72             1 1 4 18 -23303=1,1
+BinaryOp                 add_1                    2 1 in1 17 19 0=0
+BinaryOp                 mul_2                    2 1 19 18 20 0=2
+Concat                   cat_0                    2 1 13 20 21 0=0
+Split                    splitncnn_2              1 2 21 22 23
+MemoryData               pnnx_fold_109            0 1 24 0=1
+BinaryOp                 sub_3                    1 1 3 25 0=1 1=1 2=1.0
+BinaryOp                 mul_4                    1 1 25 26 0=2 1=1 2=10000.0
+Concat                   cat_1                    2 1 24 26 27 0=0
+Reshape                  reshape_53               1 1 27 28 0=241 1=1 2=1
+Split                    splitncnn_3              1 2 28 29 30
+LayerNorm                ln_29                    1 1 12 31 0=64 1=1.000000e-5 2=1
+LayerNorm                ln_30                    1 1 23 32 0=64 1=1.000000e-5 2=1
+Split                    splitncnn_4              1 2 32 33 34
+Gemm                     gemm_4                   1 1 31 35 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=64
+Reshape                  reshape_54               1 1 35 36 0=16 1=4 2=42
+Permute                  permute_45               1 1 36 37 0=2
+Gemm                     gemm_5                   1 1 34 38 10=4 2=0 3=1 4=0 5=1 6=1 7=241 8=64 9=64
+Reshape                  reshape_55               1 1 38 39 0=16 1=4 2=241
+Permute                  permute_46               1 1 39 40 0=3
+Gemm                     gemm_6                   1 1 33 41 10=4 2=0 3=1 4=0 5=1 6=1 7=241 8=64 9=64
+Reshape                  reshape_56               1 1 41 42 0=16 1=4 2=241
+Permute                  permute_47               1 1 42 43 0=2
+MatMul                   matmul_66                2 1 37 40 44
+BinaryOp                 mul_5                    1 1 44 45 0=2 1=1 2=0.25
+BinaryOp                 add_6                    2 1 45 29 46 0=0
+Softmax                  softmax_42               1 1 46 47 0=2 1=1
+MatMul                   matmul_67                2 1 47 43 48
+Permute                  permute_48               1 1 48 49 0=2
+Reshape                  reshape_57               1 1 49 50 0=64 1=42
+Gemm                     gemm_7                   1 1 50 51 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=64
+BinaryOp                 add_7                    2 1 11 51 52 0=0
+Split                    splitncnn_5              1 2 52 53 54
+LayerNorm                ln_31                    1 1 54 55 0=64 1=1.000000e-5 2=1
+MultiHeadAttention       attention_40             1 1 55 56 0=64 1=4 2=4096 3=64 4=64
+BinaryOp                 add_8                    2 1 53 56 57 0=0
+Split                    splitncnn_6              1 2 57 58 59
+LayerNorm                ln_32                    1 1 59 60 0=64 1=1.000000e-5 2=1
+Gemm                     gemm_8                   1 1 60 61 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=128 9=64
+GELU                     gelu_24                  1 1 61 62
+Gemm                     gemm_9                   1 1 62 63 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=128
+BinaryOp                 add_9                    2 1 58 63 64 0=0
+Split                    splitncnn_7              1 2 64 65 66
+LayerNorm                ln_33                    1 1 66 67 0=64 1=1.000000e-5 2=1
+LayerNorm                ln_34                    1 1 22 68 0=64 1=1.000000e-5 2=1
+Split                    splitncnn_8              1 2 68 69 70
+Gemm                     gemm_10                  1 1 67 71 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=64
+Reshape                  reshape_58               1 1 71 72 0=16 1=4 2=42
+Permute                  permute_49               1 1 72 73 0=2
+Gemm                     gemm_11                  1 1 70 74 10=4 2=0 3=1 4=0 5=1 6=1 7=241 8=64 9=64
+Reshape                  reshape_59               1 1 74 75 0=16 1=4 2=241
+Permute                  permute_50               1 1 75 76 0=3
+Gemm                     gemm_12                  1 1 69 77 10=4 2=0 3=1 4=0 5=1 6=1 7=241 8=64 9=64
+Reshape                  reshape_60               1 1 77 78 0=16 1=4 2=241
+Permute                  permute_51               1 1 78 79 0=2
+MatMul                   matmul_68                2 1 73 76 80
+BinaryOp                 mul_10                   1 1 80 81 0=2 1=1 2=0.25
+BinaryOp                 add_11                   2 1 81 30 82 0=0
+Softmax                  softmax_43               1 1 82 83 0=2 1=1
+MatMul                   matmul_69                2 1 83 79 84
+Permute                  permute_52               1 1 84 85 0=2
+Reshape                  reshape_61               1 1 85 86 0=64 1=42
+Gemm                     gemm_13                  1 1 86 87 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=64
+BinaryOp                 add_12                   2 1 65 87 88 0=0
+Split                    splitncnn_9              1 2 88 89 90
+LayerNorm                ln_35                    1 1 90 91 0=64 1=1.000000e-5 2=1
+MultiHeadAttention       attention_41             1 1 91 92 0=64 1=4 2=4096 3=64 4=64
+BinaryOp                 add_13                   2 1 89 92 93 0=0
+Split                    splitncnn_10             1 2 93 94 95
+LayerNorm                ln_36                    1 1 95 96 0=64 1=1.000000e-5 2=1
+Gemm                     gemm_14                  1 1 96 97 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=128 9=64
+GELU                     gelu_25                  1 1 97 98
+Gemm                     gemm_15                  1 1 98 99 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=128
+BinaryOp                 add_14                   2 1 94 99 100 0=0
+Split                    splitncnn_11             1 3 100 101 102 103
+LayerNorm                ln_37                    1 1 102 104 0=64 1=1.000000e-5 2=1
+Gemm                     gemm_16                  1 1 104 105 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=64
+GELU                     gelu_26                  1 1 105 106
+Gemm                     gemm_17                  1 1 106 107 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=1 9=64
+Slice                    unbind_0                 1 1 107 108 -23300=1,-233 1=1
+Reshape                  reshape_62               1 1 108 109 0=42
+Reshape                  reshape_63               1 1 103 110 0=64 1=21 2=2
+Reduction                mean_70                  1 1 110 111 0=3 1=0 -23303=1,1 4=0 5=1
+LayerNorm                ln_38                    1 1 111 112 0=64 1=1.000000e-5 2=1
+Gemm                     gemm_18                  1 1 112 113 10=4 2=0 3=1 4=0 5=1 6=1 7=2 8=64 9=64
+GELU                     gelu_27                  1 1 113 114
+Gemm                     gemm_19                  1 1 114 115 10=4 2=0 3=1 4=0 5=1 6=1 7=2 8=1 9=64
+Slice                    unbind_1                 1 1 115 116 -23300=1,-233 1=1
+Reshape                  reshape_64               1 1 116 117 0=2
+LayerNorm                ln_39                    1 1 101 118 0=64 1=1.000000e-5 2=1
+Gemm                     gemm_20                  1 1 118 119 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=64 9=64
+GELU                     gelu_28                  1 1 119 120
+Gemm                     gemm_21                  1 1 120 121 10=4 2=0 3=1 4=0 5=1 6=1 7=42 8=3 9=64
+ExpandDims               unsqueeze_73             1 1 109 122 -23303=1,1
+ExpandDims               unsqueeze_74             1 1 117 123 -23303=1,1
+Tile                     expand_44                1 1 123 124 -23302=2,1,21
+Reshape                  reshape_65               1 1 124 125 0=1 1=42
+Concat                   cat_2                    3 1 121 122 125 out0 0=1

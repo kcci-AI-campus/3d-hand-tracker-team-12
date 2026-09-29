@@ -1,4 +1,16 @@
 .venv/
+.venv-transformer/
+runs/
+.tools/
 __pycache__/
-models/*.task
-models/*.part
+
+# Generated data, builds and release archives
+exports/
+dist/
+build/
+build-*/
+*.zip
+*.log
+
+# Trained weights (large binaries)
+checkpoints/

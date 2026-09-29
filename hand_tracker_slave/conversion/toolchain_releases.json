@@ -1,0 +1,13 @@
+{
+  "ncnn": {
+    "release": "20260526",
+    "url": "https://github.com/Tencent/ncnn/archive/refs/tags/20260526.zip",
+    "sha256": "5aedf25e22d4a9ab7785d33774affee96b55b546e85318cc351a48a365d15ced"
+  },
+  "pnnx": {
+    "release": "20260704",
+    "url": "https://github.com/pnnx/pnnx/releases/download/20260704/pnnx-20260704-windows.zip",
+    "archive_sha256": "7472941823186e4ce8f829d54267c0e9f50e616e3214a80a524d4aa1e76d7fc8",
+    "executable_sha256": "57140e8c34ef150e1b0e1c2238515c1228e2a800d5f146fb0dc962b4fc624aec"
+  }
+}

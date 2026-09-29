@@ -1,0 +1,46 @@
+{
+  "architecture": "direct",
+  "export_format": 1,
+  "config": {
+    "dim": 64,
+    "heads": 4,
+    "fusion_blocks": 2,
+    "blocks": 2,
+    "dropout": 0.1,
+    "attention_dropout": 0.0,
+    "slots_per_camera": 8,
+    "event_span_s": 0.5,
+    "wrist_relative": true,
+    "refine": true
+  },
+  "formats": [
+    "ncnn"
+  ],
+  "graphs": {
+    "encoder": {
+      "inputs": [
+        [
+          2,
+          210
+        ],
+        [
+          3
+        ]
+      ]
+    },
+    "query": {
+      "inputs": [
+        [
+          240,
+          64
+        ],
+        [
+          240
+        ],
+        [
+          240
+        ]
+      ]
+    }
+  }
+}
