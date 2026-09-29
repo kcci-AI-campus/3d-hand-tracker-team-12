@@ -102,6 +102,7 @@ python hand_tracker_master/tools/hand_viewer.py --smooth .5 --hide-unseen
 - 손가락 뼈는 굵은 선, 관절은 점, 손바닥은 반투명 면으로 그립니다(왼손 파랑, 오른손 주황). 최근 어느 카메라도 못 본 손은 흐리게 그리거나(`--hide-unseen`이면 숨김) 합니다.
 - `models/rig.json`의 카메라 3대 위치와 방향, 10cm 바닥 격자를 함께 그립니다. 마우스 드래그로 회전, 휠로 확대합니다.
 - `--smooth`는 화면 표시용 지수 평활(0–0.95)입니다. 받은 좌표 자체는 바꾸지 않습니다.
+- 실제 설치에서 왼손·오른손이 뒤바뀌어 보이면 `--swap-hands`로 읽을 때 두 손을 바꿉니다(`pc_receiver.py`도 같은 옵션).
 
 H3D1 패킷(UDP, big-endian, 532바이트, [src/pc_packet.hpp](src/pc_packet.hpp)):
 
@@ -144,7 +145,7 @@ python hand_tracker_master/tools/fake_slaves.py --master 192.168.0.10
 
 - 기준 데이터는 `tools/make_golden.py`가 만듭니다. 그 안의 Python 기준 런타임은 모델을 학습한 노트북(`gigahands_colab_wrist_refine.ipynb`)과 저장소의 `DirectRuntime`과 같은 값을 냅니다(차이 0, ncnn 같은 설정).
 - PC에서 가짜 slave 2대 + 마스터(`--image`) + `pc_receiver.py`로 전체 경로를 돌려, 출력 약 10.7fps·손실 0을 확인했습니다.
-- 라즈베리 파이 ARM에서 빌드됐고, `runtime_golden`의 좌표 차이는 1.7e-4 단위(0.07mm)였습니다(2026-09-28; 이 값에 맞춰 허용치를 1e-3으로 올림). **카메라·장치 간 통신을 붙인 실행은 아직 검증하지 않았습니다.** ARM에서 fp16을 쓰면 좌표가 최대 0.8mm(2e-3 단위) 정도 달라질 수 있습니다(`--no-fp16`으로 끔).
+- 라즈베리 파이 ARM에서 빌드됐고, `runtime_golden`의 좌표 차이는 1.7e-4 단위(0.07mm)였습니다(2026-09-28; 이 값에 맞춰 허용치를 1e-3으로 올림). 실제 slave 2대 + 마스터 카메라 + PC 뷰어로 전체 경로를 실행했고, 파이의 query 시간은 5–15ms였습니다. ARM에서 fp16을 쓰면 좌표가 최대 0.8mm(2e-3 단위) 정도 달라질 수 있습니다(`--no-fp16`으로 끔).
 
 ## 모델·배치 파일 다시 만들기 (개발 PC)
 

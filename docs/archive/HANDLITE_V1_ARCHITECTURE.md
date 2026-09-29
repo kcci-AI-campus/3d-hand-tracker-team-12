@@ -1,6 +1,6 @@
 # HandLite 전체 구조 — 전처리·모델·후처리
 
-> **보관용 (2026-09-28):** HandLite v1은 HandLiteV3로 대체되어 Python 코드가 삭제됐습니다. 이 문서와 `cpp/hand_lite`는 HandLiteV3 C++ 이식의 참고용으로 남겼습니다. 아래의 파일 경로·명령은 더 이상 동작하지 않습니다. 현재 모델은 [../MODELS.md](../MODELS.md)를 보세요.
+> **보관용 (2026-09-28):** HandLite v1은 HandLiteV3로 대체되어 Python 코드와 C++ 런타임(`cpp/hand_lite`)이 모두 삭제됐습니다. 설계 기록으로만 남깁니다. 아래의 파일 경로·명령은 더 이상 동작하지 않습니다. 현재 모델은 [../MODELS.md](../MODELS.md), 전체 개발 이력은 [HISTORY.md](HISTORY.md)를 보세요.
 
 > 비교용 모델입니다. 기본 모델(HandDirect)과 두 모델의 비교는 [MODELS.md](MODELS.md)를 보세요.
 

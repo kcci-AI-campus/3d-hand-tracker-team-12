@@ -1,9 +1,0 @@
-build/
-dist/
-*.log
-models/*.part
-conversion/work/
-conversion/converted/
-conversion/__pycache__/
-conversion/probe-build/
-.venv-convert/

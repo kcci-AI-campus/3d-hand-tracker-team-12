@@ -98,7 +98,7 @@ encoder가 쓰는 관절당 특징 10개(`direct_features`):
 | `encoder` | 특징 [2, 210], 카메라 one-hot [3] | 토큰 [10, 64] |
 | `query` | 토큰 [240, 64], 유효 [240], 나이 [240] | 관절 [42, 3] |
 
-NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encoder를 한 번 돌려 토큰을 저장하고, query 때 슬롯을 골라 query 그래프를 돌립니다. 배치 `forward()`, `DirectStream`, 런타임(ncnn)이 같은 값을 내는 것을 테스트로 확인했습니다. C++ 런타임은 아직 없습니다.
+NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encoder를 한 번 돌려 토큰을 저장하고, query 때 슬롯을 골라 query 그래프를 돌립니다. 배치 `forward()`, `DirectStream`, 런타임(ncnn)이 같은 값을 내는 것을 테스트로 확인했습니다. 같은 계산을 C++로 옮긴 런타임이 [hand_tracker_master](../hand_tracker_master/README.md)의 기본 모델이며, 라즈베리 파이에서 query 한 번은 5–15ms입니다.
 
 ## 7. 수치 요약
 
@@ -124,11 +124,11 @@ NumPy 런타임(`hand_tracking/direct_runtime.py`)은 이벤트가 오면 encode
 - fusion을 깊게 해도 초반 학습은 같습니다. 지금은 모델 용량이 학습을 막고 있지 않습니다.
 - 손가락 토큰(50개 값 → 64차원)과 query당 토큰 240개는 병목이 아닙니다.
 - **확장 기준**: 본학습에서 train과 val 오차가 **둘 다 높은 값에서 함께 멈추면** 용량 부족입니다. 그때 fusion 블록이나 decoder 블록을 먼저 늘립니다(폭보다 연산 증가가 작음). train이 val보다 훨씬 낮으면 용량이 아니라 데이터·정규화 문제입니다.
-- **변경 (2026-09-24)**: fusion 1 본학습에서 6 epoch까지 train과 val이 비슷하게 붙어 내려가(42.5 / 41.9mm) 기본을 fusion 2로 올렸습니다. 여러 시점을 합치는 일을 fusion만 맡기 때문입니다. query 연산은 약 1.6배(추정)이며 파이 지연은 아직 재지 않았습니다.
+- **변경 (2026-09-24)**: fusion 1 본학습에서 6 epoch까지 train과 val이 비슷하게 붙어 내려가(42.5 / 41.9mm) 기본을 fusion 2로 올렸습니다. 여러 시점을 합치는 일을 fusion만 맡기 때문입니다. query 연산은 약 1.6배(추정)이며, 파이에서 잰 query 시간은 5–15ms입니다.
 
 ## 9. 알려진 한계
 
 - **본학습 결과**: HandDirect-wrist(손목 분해 + 단계적 보정, fusion 2)가 GPU 60 epoch에 best val 22.8mm입니다(노트북 `gigahands_colab_wrist_refine.ipynb`, 시야 밖 손 포함). 같은 검증 창·관절에서 HandLiteV3(85 epoch, 20.4mm)보다 짧은 클립은 약 2.3mm 뒤지고, 창 300개 이상 장편 클립에서는 0.7mm 차이입니다. 이전 fusion 1 GPU 실행은 6 epoch에 41.9mm였습니다.
 - **카메라 1대만 보는 손**: 데이터의 약 16%입니다. 깊이 정보가 약해서 신경망이 이 경우를 얼마나 배우는지가 관건입니다.
 - **rig 전체 어긋남**: 대충 놓은 배치의 전체 회전·이동·크기 차이는 알 수 없어, 출력은 "정해 둔 배치 기준" 좌표입니다.
-- **실시간 연결 없음**: 실제 카메라(MediaPipe) 입력을 이 특징으로 바꾸는 단계와 C++ 런타임이 아직 없습니다.
+- **실사용 체감**: 수치는 HandLiteV3가 앞서지만, 실제 장치에서는 HandDirect-wrist가 손 모양을 더 자연스럽게 유지해 마스터 기본 모델로 씁니다.

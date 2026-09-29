@@ -87,8 +87,8 @@ UDP 응답을 받지 않으므로 **마스터 수신 성공/접속 상태를 의
 보내며 검증하려면 `--image testdata/hand.jpg --send-uv`를 사용하면 됩니다.
 이 경우에도 IP/포트는 CLI로 입력하며 **이미지는 전송하지 않습니다.**
 
-수신하는 마스터는 [hand_tracker_master](../hand_tracker_master/README.md)입니다. 기존 `camera/master.py`의
-JPEG/TCP 수신기, 이전 UV42(336바이트, 헤더 없음) 형식과는 호환되지 않습니다.
+수신하는 마스터는 [hand_tracker_master](../hand_tracker_master/README.md)입니다. 이전 UV42(336바이트,
+헤더 없음) 형식과는 호환되지 않습니다.
 
 - 매 처리 프레임마다 UDP 데이터그램 **356바이트(UV2)**, 모두 **big-endian**:
 

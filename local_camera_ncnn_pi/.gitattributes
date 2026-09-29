@@ -1,8 +1,0 @@
-* text=auto
-*.sh text eol=lf
-*.bin binary
-*.jpg binary
-*.task binary
-*.tflite binary
-*.param text eol=lf
-SHA256SUMS text eol=lf
